@@ -1,0 +1,51 @@
+---
+title: "cleaning_aus_rls"
+author: "Sarah Willington"
+date: "2026-05-21"
+output: html_document
+---
+
+script to clean and explore raw rls data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+
+```
+
+```{r libraries}
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+```
+
+### read data
+
+```{r load data}
+
+project_dir <- here::here()
+
+# d <- read_csv(file.path(project_dir, "0_data", "01_data_raw", "rls_aus_raw.csv"), skip = 69)
+# col_id <- d[1:69,]
+# write_csv(col_id, "0_data/01_data_raw/col_ids.csv")
+
+df <- read_csv(
+  file.path(project_dir, "0_data", "01_data_raw", "rls_aus_raw.csv"),
+  skip = 70,
+  quote = "",
+  show_col_types = FALSE) |> 
+  rename_with(~ str_remove_all(.x, '"')) |> 
+  mutate(across(where(is.character), ~ str_remove_all(.x, '"')))
+
+
+d <- df |> 
+  filter(area == "New South Wales" | area == "Victoria" | area == "Tasmania") |> 
+  filter(method == 1) |> 
+  separate(survey_date, c('year', 'month', 'day'), sep='-', remove=TRUE) |> 
+  select(-c(FID, survey_id, country, realm, block, reporting_name, geom))
+
+
+
+
+```
