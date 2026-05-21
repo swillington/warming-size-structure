@@ -1,0 +1,757 @@
+---
+title: "Chapter 1 Model: Fit (with random effects)"
+date: 2024-11-16
+author:
+  - name: Shane A. Richards
+    id: sar
+    orcid: 0000-0002-9638-5827
+    email: shane.richards@utas.edu.au
+    affiliation: 
+      - name: School of Natural Sciences, University of Tasmania
+        city: Hobart
+        state: Tas, Australia
+        url: https://discover.utas.edu.au/shane.richards
+abstract: > 
+  An alterate presentation of the model presented in Chapter 1. The model contain randoms effects at the site and year level, and the model has been fit to a data set of lengths for the species *Notolabrus tetricus*.
+keywords:
+  - Size-frequency distribution
+  - Statistical ecology
+format:
+  html:
+    self-contained: true
+editor: visual
+toc: true
+code-overflow: wrap
+theme: cerulean
+---
+
+# Methods
+
+## Population model
+
+To generate fish length distributions, we use an approach similar to the length-based spawning potential ratio (LB-SPR) method (Hordyk et al. 2015a). Fish are assumed to follow Bertalanffy growth, where the length of a fish of age $a$ is described by the equation: $$L(a) = L_\infty \big( 1 - \exp(-K(a-a_0)) \big ).$$ This equation incorporates growth rate ($K$), asymptotic length ($L_\infty$), and ($a_0 \leq 0$), the hypothetical age at which length is zero.
+
+Fish exhibit a constant mortality rate ($M$), and we track them up to the age where they have a probability ($\varepsilon$) of being alive. This corresponds to age $a^* = -\ln(\varepsilon) / M$. For simplicity, we assume constant recruitment and that the fish population is at equilibrium. This implies that the age distribution of the population follows a negative exponential distribution. Additionally, variation in fish lengths arises from between-individual differences in $L_\infty$, which follows a normal distribution with mean $\bar{L}_\infty$ and a coefficient of variation, $c$.
+
+The resulting length-distribution is approximated by discretising age into $X$ intervals of width $\Delta_x = a^*/X$. The probability of being alive at age $a_x = x \Delta_x$ is $S_x = \exp(-Ma_x)$. The expected length at age $a_x$ is $\bar{L}_x = L(a_x | \bar{L}_\infty, K, a_0)$. Here, we set $a_0 = 0$, which results in $\bar{L}_x$ being a function of $\bar{L}_\infty$ and the ratio $M/K$. The negative-exponential age-distribution is transformed into a length-distribution by discretising length into $J$ intervals, where the $j$^th^ interval is bounded by lengths $L_{j-1}$ and $L_j$. The relative abundance of fish in length interval $j$ is $$\tilde{f}_j = \begin{cases}
+  \sum_{x=1}^X S_x \Phi \Big ( \frac{L_1-\bar{L}_x}{c\bar{L}_x} \Big ), & 
+    \text{if } j = 1;  \\
+  \sum_{x=1}^X S_x \Big ( \Phi \Big ( \frac{L_j-\bar{L}_x}{c\bar{L}_x} \Big ) -
+    \Phi \Big ( \frac{L_{j-1}-\bar{L}_x}{c\bar{L}_x} \Big ) \Big ), & 
+    \text{if } 1 < j < J;  \\
+  \sum_{x=1}^X S_x \Big ( 1 - \Phi\Big ( \frac{L_{J}-\bar{L}_x}{c\bar{L}_x} \Big ) \Big ), & 
+    \text{if } j = J;
+\end{cases}$$
+
+where $\Phi$ is the cumulative probability density function of the standard normal distribution. The proportion of fish in length interval $j$ is $f_j = \tilde{f}_j / \sum_{j=1}^J \tilde{f}_j$.
+
+The proportion of fish observed in length-interval $j$, denoted $g_j$, will differ to the true proportion of fish in the interval ($f_j$) if the probability of observing fish is affected by their length. Here, we assume that smaller fish are more difficult to observe, such that fish of lengths $L_{50}$ and $L_{95}$ have a 50% and 95% chance of being observed, respectively. Specifically, the probability a fish in length interval $j$ is observed is given by $$s_j = \bigg ( 1 + \exp \bigg ( -\frac{\ln19}{L_{95} - L_{50}} \bigg ( \frac{ L_{j-1}+L_j }{2} - L_{50} \bigg ) \bigg ) \bigg )^{-1}.$$ Given these length-dependent probabilities of observation, an estimate of the proportion of fish observed in length interval $j$ is $$g_j = \frac{s_j\tilde{f}_j} {\sum_{j=1}^J s_j\tilde{f}_j}.$$
+
+## Random effects
+
+Copilot said:
+The $M/K$ ratio for a given location and year is influenced by two fixed parameters: the mean sea-surface temperature for that year and whether the location is a marine protected area. Additionally, the $M/K$ ratio is adjusted by two random effects. The first random effect is linked to the location, with eight distinct locations considered. The second random effect is associated with each year-location combination, totaling 135 combinations.
+
+## Data Visualisation
+
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse) # data frame functionality
+library(cowplot)   # multi-plot with ggplot
+library(rstan)     # access Stan programming language
+	
+rm(list = ls()) # clear memory
+
+# read in size data
+df_raw <- read_csv("Notolabrus_tetricus.csv", show_col_types = FALSE) |>
+  arrange(Loc, year, SizeClass)
+
+glimpse(df_raw)
+```
+
+```{r}
+#| fig-width: 9
+#| fig-asp: 0.5
+#| fig-align: center
+
+pl_sst <- ggplot(df_raw) + 
+  geom_line(aes(x = SizeClass, y = f, group = rep, color = Esst)) + 
+  scale_color_gradient2(low = "blue", mid = "plum", high = "red", 
+    midpoint = 17.5) +
+  labs(x = "Size class (cm)", y = "Fraction", color = "Temp.") + 
+	facet_wrap( ~ Loc, ncol = 4) + 
+  theme_bw() + theme(panel.grid = element_blank())
+
+pl_year <- ggplot(df_raw) + 
+  geom_line(aes(x = SizeClass, y = f, group = rep, color = year)) + 
+  scale_color_gradient2(low = "blue", mid = "plum", high = "red", 
+    midpoint = 2008) +
+  labs(x = "Size class (cm)", y = "Fraction", color = "Year") + 
+	facet_wrap( ~ Loc, ncol = 4) + 
+  theme_bw() + theme(panel.grid = element_blank())
+
+plot_grid(pl_sst, pl_year, labels = c("a", "b"))
+```
+
+# Modelling
+
+## Data Preparation
+
+```{r}
+# prep data for Stan fitting
+X   <- 60 # age-classes
+eps <- 0.01
+S   <- exp(log(eps)*(1:X)/X) 
+
+size_classes <- sort(unique(df_raw$SizeClass))
+SC_max <- max(size_classes)
+df_raw$SizeClass <- factor(df_raw$SizeClass, levels = size_classes)
+
+# get concensus mpa status for each location
+df_mpa <- df_raw |>
+  select(Loc, year, mpa) |>
+  unique() |>
+  arrange(Loc, year)
+
+df_mpa_grp <- df_mpa |>
+  summarise(.by = "Loc", mpa = round(mean(mpa),0))
+
+df_fit <- df_raw |>
+  arrange(SizeClass) |>
+  select(Loc, year, rep, Esst, SizeClass, fish_count) |>
+	left_join(df_mpa_grp, by = "Loc") |>
+  pivot_wider(names_from = SizeClass, values_from = fish_count) |>
+  arrange(Loc, year)
+
+df_fit <- df_fit %>%
+  mutate(across(everything(), ~ replace_na(.x, 0))) # replace all NAs with 0
+
+N <- nrow(df_fit) # location x year data sets
+J <- length(size_classes) # number of size classes
+L <- rep(0, J+1)  # length-class boundaries
+Lmax <- SC_max + 10 # maximum size
+for (j in 2:J) {
+  L[j] <- 0.5*(size_classes[j-1] + size_classes[j])
+}
+L[J+1] <- Lmax # final length bin
+
+# z-transform sea-surface temperatures
+Esst_E  <- mean(df_fit$Esst)
+Esst_sd <- sd(df_fit$Esst)
+Esst_z  <- (df_fit$Esst - Esst_E) / Esst_sd 
+
+# extract fish counts
+m_n <- as.matrix(df_fit[ , 6:(5+J)]) # matrix of counts
+nT <- apply(m_n, 1, sum) # total counts per set
+
+r <- as.integer(factor(df_fit$Loc)) # location (integer)
+R <- max(r)                         # number of locations
+
+# create a list of data to pass to Stan
+stan_dat <- list(
+  N     = N,        # number of sets
+	R     = R,        # number of locations (random effect)
+  J     = J,        # number of size classes
+  X     = X,        # age classes
+  lnEps = log(eps), # log of epsilon
+  S     = S,        # age-dependent survival
+  Lmid  = size_classes, # middle of length box
+  L     = L,        # length boundaries
+	r     = r,        # location index
+	mpa   = df_fit$mpa, # mpa status
+  zT    = Esst_z,   # z-transformed sea-surface temperatures
+  nT    = nT,       # total number of fish per set
+  y     = m_n       # fish counts [set, sizeclass]
+)
+
+glimpse(stan_dat)
+```
+
+## Stan Model
+
+```{stan output.var = "distribution_model"}
+data {
+  int<lower=1>              N;      // number of sets
+  int<lower=1>              R;      // number of locations
+  int<lower=1>              J;      // number of size classes
+  int<lower=1>              X;      // age-classes
+  real                  lnEps;      // ln(epsilon)
+  real<lower=0.001,upper=1> S[X];   // probability alive
+  real<lower=0>          Lmid[J];   // length boundaries
+  real<lower=0>             L[J+1]; // length boundaries
+  int<lower=1,upper=R>      r[N];   // location index
+  int<lower=0,upper=1>    mpa[N];   // mpa status: 0 = no, 1 = yes
+  real                     zT[N];   // z-transformed sea-surface temperatures
+  int<lower=1>             nT[N];   // total number of fish per set
+  int<lower=0>              y[N,J]; // fish counts [set, sizeclass]
+}
+
+parameters {
+  real<lower= 1.0,upper=50.00> phi;        // multinomial overdispersion parameter
+  real<lower=30.00,upper=55.00> ELInf;     // expected maximum size 
+  real<lower= 0.50,upper= 2.50> MpK;       // typical M / K across sites and years
+  real<lower=-0.50,upper= 0.50> beta_z;    // effect of temperature on M / K
+  real<lower=-0.50,upper= 0.50> beta_mpa;  // effect of mpa on M / K
+  real<lower= 0.00,upper=25.00> L50;       // length when 50% observed                     
+  real<lower= 1.00,upper=20.00> DL95;      // length when 95% observed= L50+DL95                   
+  real<lower= 0.05,upper= 0.30> cv;        // coefficient of variation in LInf
+  real<lower=0.1,upper=1.00>    sigma_Loc; // between location variation                 
+  real<lower=0.1,upper=1.00>    sigma_N;   // between year:location variation                 
+  real MPK_Loc_RE[R];   // random deviations around overall mean for all locations
+  real MPK_N_RE[N];   // random deviations around overall mean for all locations
+}
+
+transformed parameters{
+}
+
+model {
+  vector[J] g;     // probability in length bin j
+  vector[J] alpha; // multinomial parameter for length bin j
+  vector[J] s;     // probability observe
+  vector[X] Lbar;  // expected length at age
+  
+  array[J, X] real z; // z-transformed length
+
+  real sum1;
+  real sum2;
+  real alpha0;
+  real MpKi; // M / K for specific i
+  
+  // set priors 
+  phi      ~ exponential(0.1);
+  ELInf    ~ normal(40.0, 10.0);
+  MpK      ~ normal( 1.5,  0.5);
+  beta_z   ~ normal( 0.0,  0.2);
+  beta_mpa ~ normal( 0.0,  0.2);
+  L50      ~ normal(15.0,  5.0);
+  DL95     ~ normal(10.0,  5.0);
+  cv       ~ normal( 0.1,  0.05);
+  sigma_Loc ~ normal(0.0,  0.5);
+  sigma_N   ~ normal(0.0,  0.5);
+
+  MPK_Loc_RE ~ normal(0.0, sigma_Loc); // random effect deviations (vectorised) 
+  MPK_N_RE   ~ normal(0.0, sigma_N);   
+  
+  alpha0 = 1.0 / phi; // alpha sum
+  
+  for (j in 1:J) { // probability observed when in length bin j
+    s[j] = 1.0 / (1 + exp(-(log(19)/DL95)*(Lmid[j]-L50)));
+  }
+
+  for (i in 1:N) { // for each set of counts
+    // set specific M /K
+    MpKi = exp(log(MpK) + beta_z*zT[i] + beta_mpa*mpa[i] + 
+      MPK_Loc_RE[r[i]] +  MPK_N_RE[i]); 
+  
+    for (x in 1:X) { // expected length at age
+      Lbar[x] = ELInf*(1.0 - exp(lnEps*x/(X*MpKi)));
+    }
+    
+    for (x in 1:X) {
+      for (j in 1:J) { // z-transformed length-at-age
+        z[j,x] = (L[j+1] - Lbar[x])/(cv*Lbar[x]);
+      }
+    }
+    
+    // calculate g_j for this observation i
+    
+    sum2 = 0.0; // first length box
+    for (x in 1:X) {
+      sum2 += S[x]*normal_cdf(z[1,x], 0, 1);
+    }
+    g[1] = s[1]*sum2;
+    sum1 = g[1];
+    
+    for (j in 2:(J-1)) { // intermediate length boxes
+      sum2 = 0.0; 
+      for (x in 1:X) {
+        sum2 += S[x]*(normal_cdf(z[j,x], 0, 1) - normal_cdf(z[j-1,x], 0, 1));
+      }
+      g[j] = s[j]*sum2;
+      sum1 += g[j];
+    }
+  
+    sum2 = 0.0; // last length box
+    for (x in 1:X) {
+      sum2 += S[x]*(1.0 - normal_cdf(z[J,x], 0, 1));
+    }
+    g[J] = s[J]*sum2;
+    sum1 += g[J];
+    
+    // calculate alpha
+    for (j in 1:J) {
+       g[j] = g[j] / sum1; // normalise
+       alpha[j] = g[j] / alpha0; // scale probabilities to multinomial params
+    }
+    
+    // calculate log-likelihood
+    sum1 = lgamma(alpha0) + lgamma(nT[i] + 1) - lgamma(nT[i] + alpha0);
+    for (j in 1:J) { // for each sub-period
+      sum1 += lgamma(y[i,j] + alpha[j]) - 
+        lgamma(alpha[j]) - lgamma(y[i,j] + 1); 
+    }
+    
+    target += sum1; // add log-likelihood term associated with set of obs
+  }
+}
+
+generated quantities {
+}
+```
+
+## Model Fitting
+
+```{r}
+# fit the Stan model
+fit_1 <- rstan::sampling(object = distribution_model, data = stan_dat,
+  iter = 300, warmup = 100, chains = 1, refresh = 20)
+```
+
+```{r}
+# vector of model parameter names
+params <- c("ELInf", "MpK", "L50", "DL95", "cv", "beta_z", "beta_mpa",
+  "sigma_Loc", "sigma_N", "phi")
+
+# check for posterior convergence
+traceplot(fit_1, pars = params, inc_warmup = TRUE, ncol = 4)
+```
+
+```{r}
+# show the posterior parameter statistics
+print(fit_1, probs = c(0.055,0.5,0.945), digits=3) # 89% credible intervals
+```
+
+```{r}
+l_pars <- extract(fit_1) # extract posterior samples
+```
+
+# Predictions
+
+## M/K and $L_\infty$
+
+```{r}
+df_MpK <- tibble(
+    Esst = seq(from = min(df_fit$Esst), to = max(df_fit$Esst), 
+      length.out = 20)
+  ) |>
+  mutate(
+  	zT = (Esst - Esst_E) / Esst_sd, 
+  	MpK_mdn = 0, MpK_lwr = 0, MpK_upr = 0) # median, lower
+
+for (i in 1:nrow(df_MpK)) {
+  MpK <- exp(log(l_pars$MpK) + l_pars$beta_z*df_MpK$zT[i])
+  df_MpK$MpK_mdn[i] <- median(MpK)
+  df_MpK$MpK_lwr[i] <- quantile(MpK, probs = 0.05)
+  df_MpK$MpK_upr[i] <- quantile(MpK, probs = 0.95)
+}
+
+df_s <- tibble(
+    Lmid = size_classes
+  ) |>
+  mutate(
+  	s_mdn = 0, s_lwr = 0, s_upr = 0) # median, lower
+
+for (i in 1:nrow(df_s)) {
+  s <- 1.0 / (1 + exp(-(log(19)/l_pars$DL95)*(df_s$Lmid[i]-l_pars$L50)));
+
+  df_s$s_mdn[i] <- median(s)
+  df_s$s_lwr[i] <- quantile(s, probs = 0.05)
+  df_s$s_upr[i] <- quantile(s, probs = 0.95)
+}
+
+df_ELInf <- tibble(ELInf = l_pars$ELInf)
+
+df_cv <- tibble(cv = l_pars$cv)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-asp: 0.65
+#| fig-align: center
+#| fig-cap: Posterior predictions. (a) Effect of sea surface temperature on M/K at unprotected locations. (b) Length-dependent probability of detection. (c) Mean maximum length. (d) Coefficient of variation of fish lengths for a given age. Shaded regions depict 90% credible intervals. 
+#| label: fig-PostPredParam
+
+pl_MpK <- ggplot(df_MpK) + 
+  geom_ribbon(aes(x = Esst, ymin = MpK_lwr, ymax = MpK_upr), fill = "#b2e2e2") +
+  geom_line(aes(x = Esst, y = MpK_mdn), color = "#238b45") +
+  labs(x = "Mean sea surface temperature (C)", y = "M/K") +  
+  theme_bw()
+
+pl_s <- ggplot(df_s) + 
+  geom_vline(xintercept = L, linetype = "dashed", color = "grey") +
+  geom_ribbon(aes(x = Lmid, ymin = s_lwr, ymax = s_upr), fill = "#b2e2e2") +
+  geom_line(aes(x = Lmid, y = s_mdn), color = "#238b45") +
+  labs(x = "Length (cm)", y = "Probability observe") +  
+  theme_bw() + theme(panel.grid = element_blank())
+
+pl_ELInf <- ggplot(df_ELInf) + 
+  geom_histogram(aes(x = ELInf, y = after_stat(density)), 
+    binwidth = 0.5, fill = "#b2e2e2", color = "#238b45") +
+  labs(x = "Mean maximum length (cm)", y = "Fraction") +  
+  theme_bw()
+
+pl_cv <- ggplot(df_cv) + 
+  geom_histogram(aes(x = cv, y = after_stat(density)), 
+    binwidth = 0.01, fill = "#b2e2e2", color = "#238b45") +
+  labs(x = "Coefficient of variation", y = "Fraction") +  
+  theme_bw()
+
+plot_grid(pl_MpK, pl_s, pl_ELInf, pl_cv, labels = c("a", "b", "c", "d"))
+```
+
+```{r}
+#| fig-width: 6
+#| fig-asp: 0.8
+#| fig-align: center
+#| fig-cap: Posterior parameter correlations.
+#| label: fig-PostCorr
+
+pairs(as.data.frame(l_pars) |> select(ELInf, MpK, cv, beta_z, beta_mpa))
+```
+
+## Size Distribution
+
+```{r}
+REPS  <- length(l_pars$phi)
+eps   <- 0.005 # upper survival
+lnEps <- log(eps)
+
+Essts <- c(13, 16, 19)
+zT <- (Essts - Esst_E) / Esst_sd
+```
+
+```{r}
+# predict for a typical location
+N_predict <- length(Essts)
+
+m_g_mdn <- matrix(data = NA, nrow = N_predict, ncol = J)
+m_g_lwr <- matrix(data = NA, nrow = N_predict, ncol = J)
+m_g_upr <- matrix(data = NA, nrow = N_predict, ncol = J)
+
+Lbar <- matrix(data = NA, nrow = REPS, ncol = X)
+z    <- array(data = NA, dim = c(REPS, J, X))
+
+alpha0 = 1.0 / l_pars$phi # alpha sum
+s   <- matrix(data = NA, nrow = REPS, ncol = J)
+for (j in 1:J) { # probability observed when in length bin j
+  s[ ,j] = 1.0 / (1 + exp(-(log(19)/l_pars$DL95)*(size_classes[j]-l_pars$L50)))
+}
+
+for (n in 1:N_predict) {
+  g    <- matrix(data = 0, nrow = REPS, ncol = J)
+  MpKi <- exp(log(l_pars$MpK) + l_pars$beta_z*zT[n]) # set specific M /K
+  
+  for (x in 1:X) { # expected length at age
+    Lbar[ ,x] <- l_pars$ELInf*(1.0 - exp(lnEps*x/(X*MpKi)))
+  }
+    
+  for (x in 1:X) {
+    for (j in 1:J) { # z-transformed length-at-age
+      z[ ,j,x] = (L[j+1] - Lbar[ ,x])/(l_pars$cv*Lbar[ ,x])
+    }
+  }
+    
+  # calculate g_j for this prediction
+    
+  sum1 <- rep(0, REPS)
+  
+  sum2 <- rep(0, REPS)
+  for (x in 1:X) {
+    sum2 <- sum2 + S[x]*pnorm(z[ ,1,x])
+  }
+  g[ ,1] = s[ ,1]*sum2
+  sum1 = g[ ,1]
+    
+  for (j in 2:(J-1)) { # intermediate length boxes
+    sum2 <- rep(0, REPS) 
+    for (x in 1:X) {
+      sum2 <- sum2 +  S[x]*(pnorm(z[ ,j,x]) - pnorm(z[ ,j-1,x]))
+    }
+    g[ ,j] = s[ ,j]*sum2
+    sum1 <- sum1 + g[ ,j]
+  }
+  
+  sum2 <- rep(0, REPS) # last length box
+  for (x in 1:X) {
+    sum2 <- sum2 + S[x]*(1.0 - pnorm(z[ ,J,x]))
+  }
+  g[ ,J] = s[ ,J]*sum2
+  sum1 <- sum1 + g[ ,J]
+    
+  # calculate g
+  for (j in 1:J) {
+    g[ ,j] = g[ ,j] / sum1 # normalise
+  }
+	
+  m_g_mdn[n, ] <- apply(X = g, MARGIN = 2, FUN = median)
+  m_g_lwr[n, ] <- apply(X = g, MARGIN = 2, FUN = quantile, probs = 0.05)
+  m_g_upr[n, ] <- apply(X = g, MARGIN = 2, FUN = quantile, probs = 0.95)
+}
+
+df_g <- tibble(
+  Lmid = size_classes,
+  Esst = Essts[1],
+  g_lwr = m_g_lwr[1, ],
+  g_mdn = m_g_mdn[1, ],
+  g_upr = m_g_upr[1, ])
+
+for (n in 2:N_predict) {
+  df_g <- df_g |>
+    rbind(tibble(
+      Lmid = size_classes,
+      Esst = Essts[n],
+      g_lwr = m_g_lwr[n, ],
+      g_mdn = m_g_mdn[n, ],
+      g_upr = m_g_upr[n, ]))
+}
+
+df_g$EsstF <- factor(df_g$Esst)
+```
+
+```{r}
+# predict for the observed locations
+Locs <- sort(unique(df_fit$Loc))
+df_gLoc <- expand_grid(Loc = Locs, Esst = Essts) |>
+  left_join(df_mpa_grp, by = "Loc")
+df_gLoc$Loc <- factor(df_gLoc$Loc)
+df_gLoc$iLoc <- as.integer(df_gLoc$Loc)
+df_gLoc$iEsst <- as.integer(factor(df_gLoc$Esst))
+
+
+N_predict <- nrow(df_gLoc)
+
+m_gLoc_mdn <- matrix(data = NA, nrow = N_predict, ncol = J)
+m_gLoc_lwr <- matrix(data = NA, nrow = N_predict, ncol = J)
+m_gLoc_upr <- matrix(data = NA, nrow = N_predict, ncol = J)
+
+Lbar <- matrix(data = NA, nrow = REPS, ncol = X)
+z    <- array(data = NA, dim = c(REPS, J, X))
+
+alpha0 = 1.0 / l_pars$phi # alpha sum
+s   <- matrix(data = NA, nrow = REPS, ncol = J)
+for (j in 1:J) { # probability observed when in length bin j
+  s[ ,j] = 1.0 / (1 + exp(-(log(19)/l_pars$DL95)*(size_classes[j]-l_pars$L50)))
+}
+
+for (n in 1:N_predict) {
+  g    <- matrix(data = 0, nrow = REPS, ncol = J)
+  MpKi <- exp(log(l_pars$MpK) + 
+    l_pars$beta_z*zT[df_gLoc$iEsst[n]] + l_pars$beta_mpa*df_gLoc$iEsst[n] +
+    l_pars$MPK_Loc_RE[ ,df_gLoc$iLoc[n]]) # set specific M /K
+  
+  for (x in 1:X) { # expected length at age
+    Lbar[ ,x] <- l_pars$ELInf*(1.0 - exp(lnEps*x/(X*MpKi)))
+  }
+    
+  for (x in 1:X) {
+    for (j in 1:J) { # z-transformed length-at-age
+      z[ ,j,x] = (L[j+1] - Lbar[ ,x])/(l_pars$cv*Lbar[ ,x])
+    }
+  }
+    
+  # calculate g_j for this prediction
+    
+  sum1 <- rep(0, REPS)
+  
+  sum2 <- rep(0, REPS)
+  for (x in 1:X) {
+    sum2 <- sum2 + S[x]*pnorm(z[ ,1,x])
+  }
+  g[ ,1] = s[ ,1]*sum2
+  sum1 = g[ ,1]
+    
+  for (j in 2:(J-1)) { # intermediate length boxes
+    sum2 <- rep(0, REPS) 
+    for (x in 1:X) {
+      sum2 <- sum2 +  S[x]*(pnorm(z[ ,j,x]) - pnorm(z[ ,j-1,x]))
+    }
+    g[ ,j] = s[ ,j]*sum2
+    sum1 <- sum1 + g[ ,j]
+  }
+  
+  sum2 <- rep(0, REPS) # last length box
+  for (x in 1:X) {
+    sum2 <- sum2 + S[x]*(1.0 - pnorm(z[ ,J,x]))
+  }
+  g[ ,J] = s[ ,J]*sum2
+  sum1 <- sum1 + g[ ,J]
+    
+  # calculate g
+  for (j in 1:J) {
+    g[ ,j] = g[ ,j] / sum1 # normalise
+  }
+	
+  m_gLoc_mdn[n, ] <- apply(X = g, MARGIN = 2, FUN = median)
+  m_gLoc_lwr[n, ] <- apply(X = g, MARGIN = 2, FUN = quantile, probs = 0.05)
+  m_gLoc_upr[n, ] <- apply(X = g, MARGIN = 2, FUN = quantile, probs = 0.95)
+}
+
+df_gLocL <- tibble(
+	Loc = df_gLoc$Loc[1],
+  Lmid = size_classes,
+  Esst = df_gLoc$Esst[1],
+  g_lwr = m_gLoc_lwr[1, ],
+  g_mdn = m_gLoc_mdn[1, ],
+  g_upr = m_gLoc_upr[1, ])
+
+for (n in 2:N_predict) {
+  df_gLocL <- df_gLocL |>
+    rbind(tibble(
+    	Loc = df_gLoc$Loc[n],
+      Lmid = size_classes,
+      Esst = df_gLoc$Esst[n],
+      g_lwr = m_gLoc_lwr[n, ],
+      g_mdn = m_gLoc_mdn[n, ],
+      g_upr = m_gLoc_upr[n, ]))
+}
+
+df_gLocL$EsstF <- factor(df_gLocL$Esst)
+```
+
+```{r}
+# observed frequencies
+m_f <- m_n
+for(n in 1:N) {
+  m_f[n, ] <- m_n[n, ] / nT[n]	
+}
+
+df_f <- tibble(rep = 1:N, Loc = df_fit$Loc, Esst = Esst_z*Esst_sd + Esst_E) |>
+  cbind(as.data.frame(m_f)) |>
+  pivot_longer(names_to = "Lmid", values_to = "f", 
+    cols = all_of(4:(3+J)), names_transform = as.numeric)
+
+df_f <- df_f |>
+  mutate(
+    EsstF = ifelse(Esst < 0.5*(Essts[1] + Essts[2]), Essts[1],
+      ifelse(Esst > 0.5*(Essts[2] + Essts[3]), Essts[3], Essts[2])))
+df_f$EsstF <- factor(df_f$EsstF)
+```
+
+```{r}
+#| fig-width: 5
+#| fig-asp: 0.45
+#| fig-align: center
+#| fig-cap: Predicted fish length distributions for three sea surface temperatures, for locations not an mpa. Shaded regions depict 90% credible intervals. 
+#| label: fig-PostSST1
+
+ggplot() + 
+  geom_ribbon(data = df_g,
+    aes(x = Lmid, ymin = g_lwr, ymax = g_upr, fill = EsstF)) +
+  geom_line(data = df_g, aes(x = Lmid, y = g_mdn, color = EsstF)) +
+  scale_color_manual(values = c("#0570b0", "#238443", "#cb181d")) +
+  scale_fill_manual(values = c("#bdc9e1", "#c2e699", "#fcae91")) +
+  labs(x = "Length (cm)", y = "Fraction", 
+    color = "Temperature", fill = "Temperature") +  
+  theme_bw() + theme(panel.grid = element_blank())
+```
+
+```{r}
+#| fig-width: 5
+#| fig-asp: 0.5
+#| fig-align: center
+#| fig-cap: Random deviations in log(M/K) associated with the eight locations. Error bars depict the 90% credible interval.
+#| label: fig-Post_SST1_RE_Loc
+
+df_Loc <- t(apply(X = l_pars$MPK_Loc_RE, MARGIN = 2, FUN = quantile, probs = c(0.05, 0.5, 0.95))) |>
+  as_tibble()
+names(df_Loc) <- c("lwr", "mdn", "upr")
+df_Loc$Loc <- levels(factor(df_fit$Loc))
+
+df_Loc <- df_Loc |>
+  left_join(df_mpa_grp, by = "Loc")
+df_Loc$mpa <- factor(df_Loc$mpa)
+
+ggplot(df_Loc) + 
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_errorbarh(aes(xmin = lwr, xmax = upr, y = Loc), height = 0.2) +
+  geom_point(aes(x = mdn, y = Loc, color = mpa)) +
+	labs(x = "Random deviation", y = "Location", color = "Protected") +
+  theme_bw() + theme(panel.grid = element_blank())
+```
+
+```{r}
+df_N <- t(apply(X = l_pars$MPK_N_RE, MARGIN = 2, FUN = quantile, probs = c(0.05, 0.5, 0.95))) |>
+  as_tibble()
+names(df_N) <- c("lwr", "mdn", "upr")
+df_N$Loc <- df_fit$Loc
+df_N$year <- df_fit$year
+
+df_N <- df_N |>
+  left_join(df_mpa, by = c("Loc", "year"))
+df_N$mpa <- factor(df_N$mpa)
+```
+
+```{r}
+#| fig-width: 7
+#| fig-asp: 0.6
+#| fig-align: center
+#| fig-cap: Random deviations in log(M/K) associated with the 135 location x year combinations. Error bars depict the 90% credible interval.
+#| label: fig-Post_SST1_RE_N
+
+ggplot(df_N) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_errorbar(aes(ymin = lwr, ymax = upr, x = year), width = 0.2) +
+  geom_point(aes(y = mdn, x = year, color = mpa)) +
+	facet_wrap( ~ Loc, ncol = 4) +
+	labs(x = "Year", y = "Random deviation") +
+  theme_bw() + theme(panel.grid = element_blank())
+```
+
+```{r}
+#| fig-width: 5
+#| fig-asp: 0.6
+#| fig-align: center
+#| fig-cap: Random deviations in log(M/K) associated with the 135 location x year combinations. Error bars depict the 90% credible interval.
+#| label: fig-Post_SST1_RE_N2
+
+ggplot(df_N) + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_point(aes(y = mdn, x = year, color = Loc)) +
+	labs(x = "Year", y = "Random deviation") +
+  theme_bw() + theme(panel.grid = element_blank())
+```
+
+```{r}
+#| fig-width: 7
+#| fig-asp: 1
+#| fig-align: center
+#| fig-cap: Predicted fish length distributions for three sea surface temperatures in relation to observed length distributions at each sampling location. Shaded regions depict 90% credible intervals. 
+#| label: fig-PostSST2
+
+ggplot() + 
+  geom_line(data = df_f, aes(x = Lmid, y = f, group = rep),
+    color = "grey") + 
+  geom_ribbon(data = df_gLocL,
+    aes(x = Lmid, ymin = g_lwr, ymax = g_upr, fill = EsstF)) +
+  geom_line(data = df_gLocL, aes(x = Lmid, y = g_mdn, color = EsstF)) +
+  scale_color_manual(values = c("#0570b0", "#238443", "#cb181d")) +
+  scale_fill_manual(values = c("#bdc9e1", "#c2e699", "#fcae91")) +
+  facet_grid(Loc ~ EsstF) +
+  labs(x = "Length (cm)", y = "Fraction",
+    color = "Temperature", fill = "Temperature") +  
+  theme_bw() + theme(panel.grid = element_blank())
+```
+
+# Conclusions
+
+## Major
+
+-   M/K increases with mean sea-surface temperatures (@fig-PostPredParam a)
+    -   environment is getting worse for this species
+    -   increased temperature is not translating to increased growth
+        -   increased mortality?
+-   Protected locations generally have a lower estimated M/K ($\beta_\text{mpa} < 0$)
+-   Annual variation in relative changes in estimated M/K is consistent across Tasmania (@fig-Post_SST1_RE_N2)
+
+## Minor
+
+-   Wide bin widths are making observation selectivity tricky to estimate (@fig-PostPredParam b)
+    -   how good is the numerical approximation that selectivity holds equally across the length bin?
+-   fit wants to lower $\bar{L}_\infty$ and increase the coefficient of variation (CoV) (@fig-PostCorr)
+    -   how strong to make priors on CoV (@fig-PostPredParam d)?
+-   There is so much variation in the frequencies between length bins, that it cannot be all explained by the Dirichelet multinomial distribution
+    -   $\phi$ is estimated to be high (> 20) and has little additional effect on fit when increased further
+    -   suggests that the model is structurally inadequate in some way
+        -   missing predictors?

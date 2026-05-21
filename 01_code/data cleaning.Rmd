@@ -1,0 +1,81 @@
+---
+title: "Data cleaning"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+```{r include=FALSE}
+
+library(tidyverse)
+
+#import data
+rls <- read_csv('../Data/rls_m1_tasmania.csv')
+
+
+```
+
+
+```{r}
+
+# create summary to see what to filter on 
+
+rls_summary <- rls %>%  
+  separate(survey_date, c('year', 'month', 'day'), sep='-', remove=FALSE) %>% #create a year column
+  group_by(species_name) %>% 
+  mutate(n_obs = sum(total), year_min = min(year), year_max = max(year), n_year = n_distinct(year), n_survey = n_distinct(survey_id), n_size_class = n_distinct(size_class)) %>% 
+  ungroup() %>% 
+  unite(year_span, year_min, year_max, sep = "-", remove = TRUE) %>% 
+  distinct(species_name, .keep_all = TRUE) %>% 
+  select(species_name, n_obs, year_span, n_year, n_survey, n_size_class)
+
+
+
+```
+What filtering requirements to use? I want to look at change over time, so 
+
+
+```{r}
+# filter 
+rls2 <- rls %>%  
+  separate(survey_date, c('year', 'month', 'day'), sep='-', remove=FALSE) %>% #create a year column
+  group_by(species_name) %>% 
+  mutate(n_obs = sum(total), year_min = min(year), year_max = max(year), n_year = n_distinct(year), n_survey = n_distinct(survey_id), n_size_class = n_distinct(size_class)) %>% 
+  filter(n_obs >= 200) %>% 
+  filter(n_year >=10) %>% 
+  filter(n_size_class>= 3) %>% 
+  ungroup() %>% 
+  filter(species_name!='Unidentified fish (baitfish)') %>% 
+   filter(species_name!='Arripis spp.') %>% 
+   filter(species_name!='Arripis trutta') %>% 
+   filter(species_name!='Cephaloscyllium laticeps') %>% 
+   filter(species_name!='Pseudocaranx georgianus') %>% 
+   filter(species_name!='Trachurus declivis') %>% 
+  filter(species_name!='Urolophus cruciatus')
+
+```
+
+```{r}
+table(rls2$species_name)
+```
+
+```{r}
+## random code
+uncount(total, .remove = FALSE) 
+```
+
+```{r}
+ggplot(rls2, aes(size_class ))+geom_histogram()+facet_wrap(.~species_name, scales = 'free')
+  
+```
+
+```{r}
+rls2 <- rls2 %>% group_by(species_name, size_class) %>% 
+  mutate(n_per_size_class=n()) %>% 
+  ungroup()
+```
+```{r}
+ggplot(rls2, aes(size_class, n_per_size_class))+
+  geom_point()+
+  facet_wrap(.~species_name, scales = 'free')
+```
+
