@@ -52,6 +52,52 @@ rls2 <- rls %>%
    filter(species_name!='Trachurus declivis') %>% 
   filter(species_name!='Urolophus cruciatus')
 
+d <- d |> 
+  filter(species!="Trachurus novaezelandiae"& # pelagic. yellowtail scad
+           species!="Trachinops taeniatus"& # eastern hulafish
+           species!="Trachinops caudimaculatus"& # southern hulafish
+           #species!="Atypichthys strigatus"&
+           #species!="Chromis hypsilepis"&
+           species!="Pempheris multiradiata"&
+           species!="Pempheris affinis"&
+           #species!="Parma microlepis"&
+           species!="Pseudolabrus luculentus"&
+           species!="Parma unifasciata"&
+           species!="Neoodax balteatus"&
+           species!="Thalassoma lunare"&
+           species!="Ostorhinchus limenus"&
+           species!="Thalassoma lutescens"&
+           species!="Hypoplectrodes maccullochi"&
+           species!="Thalassoma amblycephalum"&
+           species!="Upeneichthys lineatus"&
+           species!="Pagrus auratus"&
+           species!="Microcanthus joyceae"&
+           species!="Pseudolabrus guentheri"&
+           species!="Halichoeres nebulosus"&
+           species!="Gerres subfasciatus"&
+           species!="Mecaenichthys immaculatus"&
+           species!="Scomber australasicus"&
+           species!="Siphonognathus beddomei"&
+           species!="Plagiotremus tapeinosoma"&
+           species!="Eupetrichthys angustipes"&
+           species!="Stethojulis interrupta"&
+           species!="Pseudanthias squamipinnis"&
+           species!="Austrolabrus maculatus"&
+           species!="Dotalabrus aurantiacus"&
+           species!="Scarus ghobban"&
+           species!="Nemadactylus douglasii"&
+           species!="Brachaluteres jacksonianus"&
+           species!="Chelmonops truncatus"&
+           species!="Acanthaluteres spilomelanurus"&
+           species!="Nelusetta ayraud"&
+           species!="Stethojulis bandanensis"&
+           species!="Acanthurus nigrofuscus"&
+           species!="Chaetodon flavirostris"&
+           species!="Aracana aurita"&
+           species!="Acanthopagrus australis"&
+           species!="Trachurus declivis"&
+           species!="Pseudocaranx dentex")
+
 ```
 
 ```{r}
