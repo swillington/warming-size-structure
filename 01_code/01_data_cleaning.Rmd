@@ -18,6 +18,7 @@ library(tidyverse)
 library(here)
 library(patchwork)
 library(tidylog)
+library(gt)
 ```
 
 ### read data
@@ -30,6 +31,7 @@ project_dir <- here::here()
 # col_id <- d[1:69,]
 # write_csv(col_id, "0_data/01_data_raw/col_ids.csv")
 
+# read in data excluding the meta data
 df <- read_csv(
   file.path(project_dir, "0_data", "01_data_raw", "rls_aus_raw.csv"),
   skip = 70,
@@ -38,14 +40,192 @@ df <- read_csv(
   rename_with(~ str_remove_all(.x, '"')) |> 
   mutate(across(where(is.character), ~ str_remove_all(.x, '"')))
 
-
-d <- df |> 
-  filter(area == "New South Wales" | area == "Victoria" | area == "Tasmania") |> 
+# filter for areas of interest and for fish only. 
+# create year col
+# remove unwanted cols
+# make necessary cols numeric
+df2 <- df |> 
+  filter(area == "New South Wales" | area == "Victoria" | area == "Tasmania") |> # SE aus temperate regions
   filter(method == 1) |> 
+  filter(class == "Actinopteri" | class == "Actinopterygii" | class == "Teleostei") |> 
+  filter(species_name!="Actinopterygii spp.") |> 
   separate(survey_date, c('year', 'month', 'day'), sep='-', remove=TRUE) |> 
-  select(-c(FID, survey_id, country, realm, block, reporting_name, geom))
+  select(-c(FID, country, realm, block, reporting_name, geom, visibility, survey_latitude, survey_longitude)) |>   mutate(latitude = as.numeric(latitude), 
+         longitude = as.numeric(longitude), 
+         year = as.numeric(year), 
+         month = as.numeric(month), 
+         day = as.numeric(day), 
+         depth = as.numeric(depth),
+         size_class = as.numeric(size_class), 
+         total = as.numeric(total)) |> 
+  rename(species = species_name) 
 
-
+# remove size class 0 
+# filter for species with at least 10 size classes 
+# create some summary columns 
+# remove species with less than 1000 obs and less than 20 years of obs
+# remove species with less than 50 obs in size class = 30
+d <- df2 |> group_by(species) |> 
+  filter(size_class!=0) |> 
+  filter(any(size_class>=30)) |> 
+  mutate(n_obs = sum(total),
+         year_min = min(year),
+            year_max = max(year), 
+            n_year = n_distinct(year), 
+            n_survey = n_distinct(survey_id), 
+            n_size_class = n_distinct(size_class), 
+            n_sites = n_distinct(site_code)) |> 
+  filter(n_obs>=1000) |> 
+  filter(n_year>=20) |> 
+  filter(sum(total[size_class == 30], na.rm = TRUE) > 50) |>
+  ungroup() 
 
 
 ```
+
+```{r summary tables}
+# create summary tables to explore data
+species_summary <- d |> 
+  arrange(desc(total)) |>
+  group_by(species) |>
+  summarise(n_obs = sum(total),
+            n_year = n_distinct(year),
+            n_size_class = n_distinct(size_class),
+            n_sites = n_distinct(site_code)) |> 
+  arrange(desc(n_obs)) |> 
+  gt() |> 
+  cols_label(species = "Species") |> 
+  tab_options(table.font.size = px(12))
+
+species_summary
+
+# create df of obs per size class per species
+size_class_counts <- d |>
+  group_by(species, size_class) |>
+  summarise(n = sum(total), .groups = "drop") |>
+  pivot_wider(
+    names_from = size_class,
+    values_from = n,
+    values_fill = 0,
+    names_prefix = "size_"
+  )
+
+# summary table of species x size classes
+species_summary <- d |> 
+  group_by(species) |>
+  summarise(
+    n_obs = sum(total),
+    n_year = n_distinct(year),
+    n_size_class = n_distinct(size_class),
+    n_sites = n_distinct(site_code),
+    .groups = "drop"
+  ) |>
+  left_join(size_class_counts, by = "species") |>
+  arrange(desc(n_obs)) |> 
+  gt() |> 
+  cols_label(species = "Species") |> 
+  tab_options(table.font.size = px(12))
+species_summary
+  
+```
+
+```{r filter species}
+# filter species
+# remove all pelagic species
+# remove species that are heavily fished
+
+d <- d |> 
+  filter(species!="Trachurus novaezelandiae"& # pelagic. yellowtail scad
+           #species!="Trachinops caudimaculatus"& # southern hulafish. Max length 15 cm TL
+           #species!="Parma microlepis"& # white-ear. Max length 20 cm TL
+           species!="Pagrus auratus"& # snapper. fished
+           species!="Nemadactylus douglasii"& # grey morwong. fished
+           species!="Trachurus declivis"& # pelagic. greenback horse mackerel
+           species!="Acanthopagrus australis" &# yellowfin bream. fished
+           species!= "Rhabdosargus sarba"& # tarwhile, seabream. fished
+           species!= "Scomber australasicus"& # blue mack. pelagic
+           #species!="Scorpis lineolata"& # silver sweep. rec fish
+           #species!="Scorpis aequipinnis"& # sea sweep. rec fish
+           #species!="Notolabrus tetricus"& # blue throat wrasse. fished
+           #species!="Dinolestes lewini"& # long fin pike. rec fish
+           #species!="Notolabrus fucicola"& # purple wrasse. fished
+           #species!="Girella tricuspidata"& # luderick. rec fish
+           #species!="Chirodactylus spectabilis"& # banded morwong. fished
+           #species!="Kyphosus sydneyanus"& # silver drummer. rec fish
+           #species!="Girella elevata"& # rec fish
+           #species!="Latridopsis forsteri"& # bastard trumpeter. fished
+           species!="Pseudocaranx dentex") # silver trevally
+
+d_sum <- d |> group_by(species) |> 
+  summarise(n_obs = sum(total), 
+            n_year = n_distinct(year),
+            n_size_class = n_distinct(size_class),
+            n_sites = n_distinct(site_code),
+            area   = paste(sort(unique(area)), collapse = ", "),)
+  
+#write_csv(d_sum, "0_data/01_data_raw/species_list.csv")
+```
+
+```{r}
+
+d_split <- d |> 
+  mutate(size_class = factor(size_class)) |> 
+  group_split(species, area)
+
+plot_names <- map_chr(
+  d_split,
+  ~ paste(unique(.x$species), unique(.x$area), sep = " | "))
+
+plots <- d_split |> 
+  set_names(plot_names) |> 
+  map(~ ggplot(.x, aes(x = size_class, y = total)) +
+        geom_point() +
+        labs(
+          title = paste(unique(.x$species), unique(.x$area), sep = " | "),
+          x = "Size class",
+          y = "Total"
+        ) +
+        facet_wrap(~ year, scales = "free_y") +
+        theme_bw())
+
+plots[["Scorpis lineolata | New South Wales"]]
+
+iwalk(plots, ~ ggsave(
+  filename = paste0(
+    "02_pipeline/01_data_cleaning/plots_species_area/",
+    str_replace_all(.y, "[^A-Za-z0-9]+", "_"),
+    ".png"
+  ),
+  plot = .x,
+  width = 8,
+  height = 6,
+  dpi = 300
+))
+```
+
+```{r}
+plots_tbl <- d |> 
+  mutate(size_class = factor(size_class)) |> 
+  group_nest(species, area) |> 
+  mutate(
+    plot = pmap(
+      list(data, species, area),
+      ~ ggplot(..1, aes(x = size_class, y = total)) +
+        geom_point() +
+        labs(
+          title = paste(..2, ..3, sep = " - "),
+          x = "Size class",
+          y = "Total"
+        ) +
+        facet_wrap(~ year, scales = "free_y") +
+        theme_bw()
+    )
+  )
+
+plots_tbl |> 
+  filter(species == "Scorpis lineolata", area == "New South Wales") |> 
+  pull(plot) |> 
+  pluck(1)
+
+```
+
