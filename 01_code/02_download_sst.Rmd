@@ -21,9 +21,15 @@ library(lubridate)    # For date manipulation
 library(rerddap)
 library(tidyverse)    # For data manipulation and plotting
 library(here)
-
+library(patchwork)
+library(sf)
 library(terra)
 library(R.utils)
+library(rnaturalearth)
+library(rnaturalearthhires)
+library(paletteer)
+library(ggtext)
+
 ```
 
 ```{r set directories}
@@ -222,5 +228,187 @@ df_final_iso <- df_final_iso |>
 # write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean_sst.csv")
 # write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean_sst.csv")
 # write_csv(df_total, "0_data/02_data_clean/rls_combo_clean_sst.csv")
+```
+
+
+### temperature plot
+
+```{r basic temp plot for paper}
+
+# create plotting dataset
+hadisst_plot <- hadisst_sst_annual |>   
+  separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  mutate(population = factor( population,levels = unique(population)))
+
+#set colour palette
+pal <- paletteer_d("MetBrewer::Signac")
+
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF"  )
+
+# sst plot by population
+  pl <- ggplot(hadisst_plot, aes(year, sst_mean_annual, group = population, colour = population))+
+  geom_line(linewidth = 0.3)+
+   scale_color_manual(values = pal)+
+  labs(x = "Year", y = expression("Mean annual SST ( " * degree * "C)"), colour = "Population")+
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 6))+
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 6))+
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.2)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size =9 ),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9), 
+    axis.title.x = element_blank())
+pl
+
+# ggsave(
+#   "03_graphics/sst_base.png",
+#   pl,
+#   width = 10,
+#   height = 9.5,
+#   dpi = 600,
+#   units = "cm"
+# )
+
+
+```
+
+```{r map of population locs}
+# change population for map legend
+latlon <- latlon |>
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  mutate(population = factor( population,levels = unique(population)))
+
+# get polygons of each population
+population_grid_sf <- latlon |>
+  mutate(
+    geometry = pmap(
+      list(lonmin, lonmax, latmin, latmax),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin
+            ),
+            ncol = 2,
+            byrow = TRUE
+          )
+        ))
+      }
+    )
+  ) |>
+  st_as_sf(crs = 4326)
+
+# get land layers
+# Australia land
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to southeastern Australia / Tasmania
+aus <- st_crop(
+  aus,
+  xmin = 135, xmax = 155,
+  ymin = -45, ymax = -20)
+
+# state boundaries
+aus_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+    xmin = 135, xmax = 155,
+    ymin = -45, ymax = -20 )
+
+# Set plot limits from your points, with padding
+pad <- 1.5
+
+point_coords <- st_coordinates(site_points_sf)
+
+xlim <- range(point_coords[, "X"], na.rm = TRUE) + c(-pad, pad)
+ylim <- range(point_coords[, "Y"], na.rm = TRUE) + c(-pad, pad)
+
+# map plot showing populations
+p_population_map <- ggplot() +
+  geom_sf(
+    data = population_grid_sf,
+    aes(fill = population),
+    colour = NA) +
+  geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  scale_fill_manual( values = pal,name = "Population") +
+  coord_sf(
+        xlim = c(143, 160),
+        ylim =c(-45, -28),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+p_population_map
+
+# combine with temperature plot
+pl <- pl+ theme_bw()+theme(legend.position = "none", panel.grid.minor = element_blank(),panel.grid.major = element_line(linewidth = 0.2),)
+
+map_plots <- pl+p_population_map
+
+ggsave(
+  "03_graphics/population_map.png",
+  p_population_map,
+  width = 10,
+  height = 9.5,
+  dpi = 600,
+  units = "cm"
+)
+
+ggsave(
+  "03_graphics/sst_population_map.png",
+  map_plots,
+  width = 20,
+  height = 9.5,
+  dpi = 600,
+  units = "cm"
+)
 ```
 
