@@ -1,0 +1,226 @@
+---
+title: "temperature data for rls data"
+author: "Sarah Willington"
+date: "2026-06-10"
+output: html_document
+---
+
+# hadisst_subset.R
+
+Download HadISST monthly SST from met office, subset by lon/lat/years
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r libraries}
+
+library(ncdf4)        # For handling netCDF files    
+library(lubridate)    # For date manipulation
+library(rerddap)
+library(tidyverse)    # For data manipulation and plotting
+library(here)
+
+library(terra)
+library(R.utils)
+```
+
+```{r set directories}
+# Set directories
+project_dir <- here::here()
+output_dir <- file.path(project_dir, "0_data", "01_data_raw")
+```
+
+```{r load data}
+df_final <- read_csv(file.path(project_dir, "0_data", "02_data_clean", "rls_se_aus_clean.csv"))
+df_final_iso <- read_csv( file.path(project_dir,"0_data/02_data_clean/rls_lhi_clean.csv"))
+df_total <- read_csv(file.path(project_dir,"0_data/02_data_clean/rls_combo_clean.csv"))
+
+```
+
+
+```{r get population coords}
+lon_breaks <- seq(135.5, 160.5, by = 1)
+lat_breaks <- seq(-45.5, -10.5, by = 1)
+
+lon_labels <- lon_breaks[-length(lon_breaks)] + 0.5
+lat_labels <- lat_breaks[-length(lat_breaks)] + 0.5
+
+latlon <- df_total |>
+  mutate(pop_lon = cut(longitude, breaks = lon_breaks,labels = lon_labels,include.lowest = TRUE),
+        pop_lat = cut(latitude, breaks = lat_breaks,labels = lat_labels,include.lowest = TRUE),
+        pop_lon = as.numeric(as.character(pop_lon)),
+        pop_lat = as.numeric(as.character(pop_lat)),
+        population = paste(pop_lat, pop_lon, sep = "_")) |>
+  filter( !is.na(pop_lat),
+          !is.na(pop_lon))|>
+  distinct(population, pop_lat, pop_lon) |>
+  transmute(population = population,
+    latmin = pop_lat - 0.5,
+    latmax = pop_lat + 0.5,
+    lonmin = pop_lon - 0.5,
+    lonmax = pop_lon + 0.5) |>
+  arrange(latmin, lonmin)
+
+#write_csv(latlon, "0_data/01_data_raw/population_sites_HadISST.csv")
+```
+
+
+```{r view HadISST meta data}
+
+# get dataset info object
+info_hadisst <- info("erdHadISST")
+
+# see coordinate metadata
+info_hadisst$alldata$latitude
+info_hadisst$alldata$longitude
+
+```
+
+```{r download directly from met office and subset}
+
+
+# Download and open HadISST SST
+download_hadisst <- function() {
+
+  gz_path <- tempfile(fileext = ".nc.gz")
+  nc_path <- sub("\\.gz$", "", gz_path)
+
+  download.file(
+    "https://www.metoffice.gov.uk/hadobs/hadisst/data/HadISST_sst.nc.gz",
+    gz_path,
+    mode = "wb"
+  )
+
+  R.utils::gunzip(
+    gz_path,
+    destname = nc_path,
+    remove = TRUE
+  )
+
+  sst <- terra::rast(nc_path, subds = "sst")
+
+  list(sst = sst, nc_path = nc_path)
+}
+
+
+# Extract monthly mean SST for one population
+subset_population_sst <- function(
+  sst,
+  population,
+  latmin,
+  latmax,
+  lonmin,
+  lonmax,
+  years
+) {
+
+  sst_crop <- terra::crop(
+    sst,
+    terra::ext(lonmin, lonmax, latmin, latmax)
+  )
+
+  dates <- as.Date(terra::time(sst_crop))
+
+  keep <- lubridate::year(dates) %in% years
+
+  sst_crop <- sst_crop[[keep]]
+  dates <- dates[keep]
+
+  tibble::tibble(
+    population = population,
+    date = dates,
+    year = lubridate::year(dates),
+    month = lubridate::month(dates),
+    sst_mean = as.numeric(
+      terra::global(sst_crop, "mean", na.rm = TRUE)[, 1]
+    )
+  )
+}
+
+
+# Download HadISST once, extract each population, and save CSV files
+get_hadisst_for_populations <- function(
+  populations,
+  years,
+  latlon,
+  out_dir = file.path(project_dir, "0_data", "HadISST_subsets")
+) {
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  tmp <- download_hadisst()
+  on.exit(file.remove(tmp$nc_path), add = TRUE)
+
+  latlon |>
+    dplyr::filter(population %in% populations) |>
+    purrr::pmap_dfr(
+      function(population, latmin, latmax, lonmin, lonmax, ...) {
+
+        out <- subset_population_sst(
+          sst = tmp$sst,
+          population = population,
+          latmin = latmin,
+          latmax = latmax,
+          lonmin = lonmin,
+          lonmax = lonmax,
+          years = years
+        )
+
+        readr::write_csv(
+          out,
+          file.path(
+            out_dir,
+            paste0(
+              "HadISST_sst_mean_",
+              population, "_",
+              min(years), "-", max(years),
+              ".csv"
+            )
+          )
+        )
+
+        out
+      }
+    )
+}
+
+# ============================
+# usage
+# ============================
+hadisst_sst <- get_hadisst_for_populations(
+  populations = unique(latlon$population),
+  years = 1992:2025,
+  latlon = latlon
+)
+
+write_csv(hadisst_sst, file = file.path(output_dir,paste("HadISST_all_pops_monthly_mean.csv" )))
+```
+
+
+```{r combine with rls data}
+hadisst_sst <- read_csv(file.path(output_dir,paste("HadISST_all_pops_monthly_mean.csv" )))
+
+#check all years have all months
+d <- hadisst_sst |>
+  count(population, year, name = "n_months")
+
+# annual mean sst
+hadisst_sst_annual <- hadisst_sst |> 
+  group_by(population, year) |> 
+  summarise(sst_mean_annual = mean(sst_mean)) |> 
+  ungroup()
+
+df_total <- df_total |> 
+  left_join(hadisst_sst_annual, by = c("population", "year"))
+df_final <- df_final |> 
+  left_join(hadisst_sst_annual, by = c("population", "year"))
+df_final_iso <- df_final_iso |> 
+  left_join(hadisst_sst_annual, by = c("population", "year"))
+
+# write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean_sst.csv")
+# write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean_sst.csv")
+# write_csv(df_total, "0_data/02_data_clean/rls_combo_clean_sst.csv")
+```
+
