@@ -49,8 +49,7 @@ The proportion of fish observed in length-interval $j$, denoted $g_j$, will diff
 
 ## Random effects
 
-Copilot said:
-The $M/K$ ratio for a given location and year is influenced by two fixed parameters: the mean sea-surface temperature for that year and whether the location is a marine protected area. Additionally, the $M/K$ ratio is adjusted by two random effects. The first random effect is linked to the location, with eight distinct locations considered. The second random effect is associated with each year-location combination, totaling 135 combinations.
+Copilot said: The $M/K$ ratio for a given location and year is influenced by two fixed parameters: the mean sea-surface temperature for that year and whether the location is a marine protected area. Additionally, the $M/K$ ratio is adjusted by two random effects. The first random effect is linked to the location, with eight distinct locations considered. The second random effect is associated with each year-location combination, totaling 135 combinations.
 
 ## Data Visualisation
 
@@ -65,7 +64,7 @@ library(rstan)     # access Stan programming language
 rm(list = ls()) # clear memory
 
 # read in size data
-df_raw <- read_csv("Notolabrus_tetricus.csv", show_col_types = FALSE) |>
+df_raw <- read_csv("0_data/02_data_clean/Notolabrus_tetricus.csv", show_col_types = FALSE) |>
   arrange(Loc, year, SizeClass)
 
 glimpse(df_raw)
@@ -301,12 +300,19 @@ generated quantities {
 }
 ```
 
+```{r}
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+distribution_model <- stan_model("01_code/distribution_model.stan")
+```
+
 ## Model Fitting
 
 ```{r}
 # fit the Stan model
 fit_1 <- rstan::sampling(object = distribution_model, data = stan_dat,
-  iter = 300, warmup = 100, chains = 1, refresh = 20)
+  iter = 20, warmup = 10, chains = 1, refresh = 20)
 ```
 
 ```{r}
@@ -752,6 +758,6 @@ ggplot() +
 -   fit wants to lower $\bar{L}_\infty$ and increase the coefficient of variation (CoV) (@fig-PostCorr)
     -   how strong to make priors on CoV (@fig-PostPredParam d)?
 -   There is so much variation in the frequencies between length bins, that it cannot be all explained by the Dirichelet multinomial distribution
-    -   $\phi$ is estimated to be high (> 20) and has little additional effect on fit when increased further
+    -   $\phi$ is estimated to be high (\> 20) and has little additional effect on fit when increased further
     -   suggests that the model is structurally inadequate in some way
         -   missing predictors?
