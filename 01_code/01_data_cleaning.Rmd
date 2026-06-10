@@ -19,13 +19,44 @@ library(here)
 library(patchwork)
 library(tidylog)
 library(gt)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthhires)
+library(paletteer)
+library(ggtext)
 ```
 
-### read data
 
-```{r load data}
+```{r set project directory path}
 
+rm(list = ls())
 project_dir <- here::here()
+```
+
+
+## read data
+
+### initial filtering. 
+
+1. Refine to only include the temperate SE Aus regions (NSW, VIC, TAS)
+
+2. Filter to only include method 1 surveys
+
+3. Filter to include fish only
+
+4. remove Actinopterygii spp. under species_name
+
+5. Remove size class = 0
+
+7. Assign to populations (1 degree lat lon boxes)
+
+8. Keep species × population × year combinations with at least 50 individuals
+
+9. spread across at least 5 size classes.
+
+10. Then keep only species × population combinations with at least 10 years of data.
+
+```{r load data and filter}
 
 # d <- read_csv(file.path(project_dir, "0_data", "01_data_raw", "rls_aus_raw.csv"), skip = 69)
 # col_id <- d[1:69,]
@@ -41,6 +72,7 @@ df <- read_csv(
   mutate(across(where(is.character), ~ str_remove_all(.x, '"')))
 
 # filter for areas of interest and for fish only. 
+# remove size class 0 
 # create year col
 # remove unwanted cols
 # make necessary cols numeric
@@ -49,8 +81,10 @@ df2 <- df |>
   filter(method == 1) |> 
   filter(class == "Actinopteri" | class == "Actinopterygii" | class == "Teleostei") |> 
   filter(species_name!="Actinopterygii spp.") |> 
+  filter(size_class!=0) |> 
   separate(survey_date, c('year', 'month', 'day'), sep='-', remove=TRUE) |> 
-  select(-c(FID, country, realm, block, reporting_name, geom, visibility, survey_latitude, survey_longitude)) |>   mutate(latitude = as.numeric(latitude), 
+  select(-c(FID, country, realm, block, reporting_name, geom, visibility, survey_latitude, survey_longitude)) |>  
+  mutate(latitude = as.numeric(latitude), 
          longitude = as.numeric(longitude), 
          year = as.numeric(year), 
          month = as.numeric(month), 
@@ -60,38 +94,56 @@ df2 <- df |>
          total = as.numeric(total)) |> 
   rename(species = species_name) 
 
-# remove size class 0 
-# filter for species with at least 10 size classes 
-# create some summary columns 
-# remove species with less than 1000 obs and less than 20 years of obs
-# remove species with less than 50 obs in size class = 30
-d <- df2 |> group_by(species) |> 
-  filter(size_class!=0) |> 
-  filter(any(size_class>=30)) |> 
-  mutate(n_obs = sum(total),
-         year_min = min(year),
-            year_max = max(year), 
-            n_year = n_distinct(year), 
-            n_survey = n_distinct(survey_id), 
-            n_size_class = n_distinct(size_class), 
-            n_sites = n_distinct(site_code)) |> 
-  filter(n_obs>=1000) |> 
-  filter(n_year>=20) |> 
-  filter(sum(total[size_class == 30], na.rm = TRUE) > 50) |>
-  ungroup() 
+# assign populations
+lon_breaks <- seq(135.5, 160.5, by = 1)
+lat_breaks <- seq(-45.5, -10.5, by = 1)
 
+lon_labels <- lon_breaks[-length(lon_breaks)] + 0.5
+lat_labels <- lat_breaks[-length(lat_breaks)] + 0.5
+
+df_pop <- df2 |>
+  mutate(
+    pop_lon = cut(
+      longitude,
+      breaks = lon_breaks,
+      labels = lon_labels,
+      include.lowest = TRUE),
+    pop_lat = cut(
+      latitude,
+      breaks = lat_breaks,
+      labels = lat_labels,
+      include.lowest = TRUE),
+    pop_lon = as.numeric(as.character(pop_lon)),
+    pop_lat = as.numeric(as.character(pop_lat)),
+    population = paste(pop_lat, pop_lon, sep = "_"))|> 
+   mutate(grp_id = row_number())
+
+# Keep species × population × year combinations with at least 50 individuals
+# spread across at least 5 size classes.
+# Then keep only species × population combinations with at least 10 years of data.
+df_filtered <- df_pop |> 
+  group_by(species, population, year) |> 
+  mutate(n_obs_pop = sum(total),
+         n_size_class = n_distinct(size_class)) |> 
+  filter(n_obs_pop>=50,
+         n_size_class>=5) |> 
+  ungroup() |>
+  group_by(species, population) |>
+  mutate(n_year = n_distinct(year)) |>
+  filter(n_year>=10) |> 
+  ungroup()
 
 ```
 
 ```{r summary tables}
 # create summary tables to explore data
-species_summary <- d |> 
+species_summary <- df_filtered |> 
   arrange(desc(total)) |>
   group_by(species) |>
   summarise(n_obs = sum(total),
             n_year = n_distinct(year),
             n_size_class = n_distinct(size_class),
-            n_sites = n_distinct(site_code)) |> 
+            n_pop = n_distinct(population)) |> 
   arrange(desc(n_obs)) |> 
   gt() |> 
   cols_label(species = "Species") |> 
@@ -100,7 +152,7 @@ species_summary <- d |>
 species_summary
 
 # create df of obs per size class per species
-size_class_counts <- d |>
+size_class_counts <- df_filtered |>
   group_by(species, size_class) |>
   summarise(n = sum(total), .groups = "drop") |>
   pivot_wider(
@@ -111,7 +163,7 @@ size_class_counts <- d |>
   )
 
 # summary table of species x size classes
-species_summary <- d |> 
+species_summary <- df_filtered |> 
   group_by(species) |>
   summarise(
     n_obs = sum(total),
@@ -134,7 +186,7 @@ species_summary
 # remove all pelagic species
 # remove species that are heavily fished
 
-d <- d |> 
+df_filtered <- df_filtered |> 
   filter(species!="Trachurus novaezelandiae"& # pelagic. yellowtail scad
            #species!="Trachinops caudimaculatus"& # southern hulafish. Max length 15 cm TL
            #species!="Parma microlepis"& # white-ear. Max length 20 cm TL
@@ -156,7 +208,7 @@ d <- d |>
            #species!="Latridopsis forsteri"& # bastard trumpeter. fished
            species!="Pseudocaranx dentex") # silver trevally
 
-d_sum <- d |> group_by(species) |> 
+d_sum <- df_filtered |> group_by(species) |> 
   summarise(n_obs = sum(total), 
             n_year = n_distinct(year),
             n_size_class = n_distinct(size_class),
@@ -166,45 +218,69 @@ d_sum <- d |> group_by(species) |>
 #write_csv(d_sum, "0_data/01_data_raw/species_list.csv")
 ```
 
-```{r}
+```{r visualise data plots}
 
-d_split <- d |> 
-  mutate(size_class = factor(size_class)) |> 
-  group_split(species, area)
+d_points <- df_filtered |> 
+  select(area, species, year, size_class, total) 
 
-plot_names <- map_chr(
-  d_split,
-  ~ paste(unique(.x$species), unique(.x$area), sep = " | "))
+d_lines <- df_filtered |> 
+  group_by(area, species, year, size_class) |> 
+  summarise(
+    n_obs_size = sum(total, na.rm = TRUE),
+    .groups = "drop") 
 
-plots <- d_split |> 
-  set_names(plot_names) |> 
-  map(~ ggplot(.x, aes(x = size_class, y = total)) +
-        geom_point() +
-        labs(
-          title = paste(unique(.x$species), unique(.x$area), sep = " | "),
-          x = "Size class",
-          y = "Total"
-        ) +
-        facet_wrap(~ year, scales = "free_y") +
-        theme_bw())
+plot_groups <- d_points |> 
+  distinct(species, area)
 
-plots[["Scorpis lineolata | New South Wales"]]
+pwalk(plot_groups, function(species, area) {
+  
+  point_data <- d_points |> 
+    filter(species == !!species, area == !!area)
+  
+  line_data <- d_lines |> 
+    filter(species == !!species, area == !!area)
+  
+   # scaling values for this species x area plot
+  point_max <- max(point_data$total, na.rm = TRUE)
+  line_max  <- max(line_data$n_obs_size, na.rm = TRUE)
+  
+  scale_factor <- point_max / line_max
+  
+  p <- ggplot(point_data, aes(x = size_class)) +
+    geom_point(aes(y = total), size = 0.7, alpha = 0.7) +
+    geom_line( data = line_data,
+              aes(y = n_obs_size* scale_factor, group = 1),
+              colour = "grey40",
+              linewidth = 0.4) +
+    scale_y_continuous(
+      name = "Total",
+      sec.axis = sec_axis(
+        ~ . / scale_factor,
+        name = "Total across observations")) +
+    labs(title = paste(species, area, sep = " | "),
+      x = "Size class",
+      y = "Total") +
+    facet_wrap(~ year, scales = "free_y") +
+    theme_bw() +
+    theme(axis.text = element_text(size = 7))
+  
+  file_name <- paste(species, area, sep = "_") |> 
+    str_replace_all("[^A-Za-z0-9]+", "_")
+  
+  ggsave(
+    filename = paste0("02_pipeline/01_data_cleaning/plots_species_area/", file_name, ".png"),
+    plot = p,
+    width = 9,
+    height = 6,
+    dpi = 300
+  )
+})
 
-iwalk(plots, ~ ggsave(
-  filename = paste0(
-    "02_pipeline/01_data_cleaning/plots_species_area/",
-    str_replace_all(.y, "[^A-Za-z0-9]+", "_"),
-    ".png"
-  ),
-  plot = .x,
-  width = 8,
-  height = 6,
-  dpi = 300
-))
+
 ```
 
 ```{r}
-plots_tbl <- d |> 
+plots_tbl <- df_filtered |> 
   mutate(size_class = factor(size_class)) |> 
   group_nest(species, area) |> 
   mutate(
@@ -227,5 +303,658 @@ plots_tbl |>
   pull(plot) |> 
   pluck(1)
 
+```
+
+```{r manually filter outliers}
+df_filtered2 <- df_filtered |> 
+  filter(!(species == "Acanthaluteres vittiger" & size_class >= 50)) |> 
+  filter(!(species == "Achoerodus viridis" & total >100)) |> 
+  filter(!(species == "Achoerodus viridis" & size_class >=150 )) |> 
+  filter(!(species == "Anampses elegans" & size_class > 40 )) |> 
+  filter(!(species == "Aplodactylus lophodon" & size_class>50)) |> 
+  filter(!(species == "Atypichthys strigatus" & total > 1000 )) |>
+  filter(!(species == "Atypichthys strigatus" & size_class >35 )) |> 
+  filter(!(species == "Austrolabrus maculatus" & size_class >20 )) |> 
+  filter(!(species == "Caesioperca lepidoptera" & total>= 1000)) |> 
+  filter(!(species == "Caesioperca lepidoptera" & size_class>35)) |> 
+  filter(!(species == "Chaetodon tricinctus" & total>= 500)) |> 
+  filter(!(species == "Chlorurus dordidus" & size_class>60)) |>
+  filter(!(species == "Chromis hypsilepis" & size_class>25)) |>
+  filter(!(species == "Chromis hypsilepis" & total >=2000)) |>
+  filter(!(species == "Coris bulbifrons" & size_class > 80)) |> 
+  filter(!(species == "Coris picta" & size_class >= 40)) |> 
+  filter(!(species == "Dinolestes lewini" & size_class>70)) |> 
+  filter(!(species == "Dotalabrus aurantiacus" & size_class>20)) |> 
+  filter(!(species == "Enoplosus armatus" & size_class > 40)) |> 
+  filter(!(species == "Eupetrichthys angustipes" & size_class > 25)) |> 
+  filter(!(species == "Gerres subfasciatus" & size_class > 30)) |>
+  filter(!(species == "Girella zebra" & size_class>60)) |> 
+  filter(!(species == "Halichoeres nebulosus" & size_class > 15)) |> 
+  filter(!(species == "Hypoplectrodes maccullochi" & size_class > 30)) |> 
+  filter(!(species == "Labroides dimidiatus" & size_class > 20)) |> 
+  filter(!(species == "Mecaenichthys immaculatus" & size_class > 20)) |>
+  filter(!(species == "Meuschenia freycineti" & size_class>70)) |> 
+  filter(!(species == "Meuschenia hippocrepis" & size_class > 60)) |> 
+  filter(!(species == "Morwong fuscus" & size_class >75)) |> 
+  filter(!(species == "Morwong fuscus" & total>300)) |> 
+  filter(!(species == "Neoglyphidodon polyacanthus" & size_class > 20)) |> 
+  filter(!(species == "Neoodax balteatus" & size_class > 25)) |> 
+  filter(!(species == "Notolabrus fucicola" & size_class>60)) |> 
+  filter(!(species == "Notolabrus gymnogenis" & size_class>60)) |> 
+  filter(!(species == "Notolabrus tetricus" & size_class > 70)) |> 
+  filter(!(species == "Olisthops cyanomelas" & size_class>=75)) |> 
+  filter(!(species == "Ophthalmolepis lineolatus" & size_class>60)) |> 
+  filter(!(species == "Ophthalmolepis lineolatus" & total >75)) |>
+  filter(!(species == "Ostorhinchus limenus" & size_class>20)) |>
+  filter(!(species == "Ostorhinchus norfolcensis" & size_class>20)) |>
+  filter(!(species == "Ostorhinchus norfolcensis" & total >=1000)) |>
+  filter(!(species == "Parma microlepis" & size_class>30)) |> 
+  filter(!(species == "Parma microlepis" & total >=80)) |> 
+  filter(!(species == "Parma unifasciata" & size_class>25)) |> 
+  filter(!(species == "Parma victoriae" & size_class> 35)) |> 
+  filter(!(species == "Pempheris affinis" & size_class>25)) |> 
+  filter(!(species == "Pempheris affinis" & total >=1000)) |>
+  filter(!(species == "Pempheris compressa" & total >=1000)) |> 
+  filter(!(species == "Pictilabrus laticlavius" & size_class>=40)) |> 
+  filter(!(species == "Pictilabrus laticlavius" & total >200)) |> 
+  filter(!(species == "Prionurus microlepidotus" & total>=1000)) |> 
+  filter(!(species == "Pseudogoniistius nigripes" & size_class>60)) |> 
+  filter(!(species == "Pseudogoniistius nigripes" & total>100)) |> 
+  filter(!(species == "Pseudolabrus guentheri" & size_class>30 )) |> 
+  filter(!(species == "Pseudolabrus luculentus" & size_class>30 )) |> 
+  filter(!(species == "Pseudolabrus rubicundus" & size_class>30 )) |> 
+  filter(!(species == "Schuettea scalaripinnis" & total>1000 )) |>
+  filter(!(species == "Scorpis aequipinnis" & size_class>60)) |> 
+  filter(!(species == "Scorpis lineolata" & total>1500)) |> 
+  filter(!(species == "Scorpis lineolata" & size_class >40)) |> 
+  filter(!(species == "Stegastes fasciolatus" & size_class >20)) |> 
+  filter(!(species == "Thalassoma amblycephalum" & size_class >20)) |> 
+  filter(!(species == "Thalassoma lunare" & size_class >40)) |> 
+  filter(!(species == "Thalassoma lunare" & total >=1000)) |> 
+  filter(!(species == "Trachinops caudimaculatus" & size_class>20)) |> 
+  filter(!(species == "Trachinops caudimaculatus" & total >4000)) |> 
+  filter(!(species == "Trachinops taeniatus" & size_class>20)) |> 
+  filter(!(species == "Trachinops taeniatus" & total >=4000)) |> 
+  filter(!(species == "Upeneichthys lineatus" & size_class >=40)) 
+```
+
+
+```{r species distribution maps}
+
+# Summarise to one point per site
+site_points <- df_filtered2|>
+  group_by(species, site_code) |>
+  summarise(
+    lon = first(longitude),
+    lat = first(latitude),
+    n_obs = sum(total, na.rm = TRUE),
+    .groups = "drop")
+
+# Convert to sf points
+site_points_sf <- st_as_sf(
+  site_points,
+  coords = c("lon", "lat"),
+  crs = 4326)
+
+# Australia land
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to southeastern Australia / Tasmania
+aus <- st_crop(
+  aus,
+  xmin = 135, xmax = 155,
+  ymin = -45, ymax = -20)
+
+# state boundaries
+aus_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+    xmin = 135, xmax = 155,
+    ymin = -45, ymax = -20 )
+
+# Set plot limits from your points, with padding
+pad <- 1.5
+
+point_coords <- st_coordinates(site_points_sf)
+
+xlim <- range(point_coords[, "X"], na.rm = TRUE) + c(-pad, pad)
+ylim <- range(point_coords[, "Y"], na.rm = TRUE) + c(-pad, pad)
+
+# Plot
+species_maps <- site_points_sf |>
+  split(site_points_sf$species) |>
+  map(~ {
+    ggplot() +
+      geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+      geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+      geom_sf(
+        data = .x,
+        aes(size = n_obs),
+        colour = "black",
+        alpha = 0.8 ) +
+      scale_size_continuous(
+        name = "No. of obs",
+        range = c(0.8, 4) ) +
+      coord_sf(
+        xlim = xlim,
+        ylim = ylim,
+        expand = FALSE) +
+      scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) ifelse(x %in% seq(-45.5, -10.5, by = 2), x, "")) +
+      scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) ifelse(x %in% seq(135.5, 160.5,, by = 4), x, ""))+
+      labs(
+        title = unique(.x$species),
+        x = expression("Longitude ("*degree*"E)"),
+        y = expression("Latitude ("*degree*"S)")) +
+      theme_bw() +
+      theme(legend.position = "right" )
+  })
+
+species_maps[[35]]
+
+# facet plot of all species
+p_species_maps <- ggplot() +
+  geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+  geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = site_points_sf,
+    size = 0.5,
+    colour = "black",
+    alpha = 0.8) +
+  coord_sf(
+    xlim = xlim,
+    ylim = ylim,
+    expand = FALSE) +
+  facet_wrap(~ species,
+             labeller = labeller(species = label_wrap_gen(width = 10)), 
+             ncol = 9) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+      scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) ifelse(seq_along(x) %% 6 == 1, x, ""))+
+  labs(
+    x = expression("Longitude ("*degree*"E)"),
+    y = expression("Latitude ("*degree*"S)")) +
+  theme_bw() +
+  theme(
+    axis.title = element_text(size = 15),
+    axis.ticks = element_line(linewidth = 0.2),
+    axis.text = element_text(size = 8), 
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(size = 9, face = "italic"))
+
+p_species_maps
+
+ggsave(
+  "02_pipeline/01_data_cleaning/species_site_maps2.png",
+  p_species_maps,
+  width = 32,
+  height = 42,
+  units = "cm",
+  dpi = 600)
+
+```
+
+```{r map showing populations}
+map_points <- df_filtered2 |> 
+  select(species, site_code, total, population, latitude, longitude) |> 
+  distinct(species, site_code, .keep_all = TRUE)
+
+ggplot() +
+  geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+  geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_point(
+    data = map_points,
+    aes(x = longitude, y = latitude, colour = population),
+    size = 1
+  ) +
+  coord_sf(
+    xlim = xlim,
+    ylim = ylim,
+    expand = FALSE,
+    default_crs = sf::st_crs(4326)
+  ) +
+  scale_y_continuous(breaks = seq(-45.5, -10.5, by = 1),
+                     labels = function(x) ifelse(seq_along(x) %% 2 == 1, x, "")) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                     labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+  labs(
+    x = expression("Longitude ("*degree*"E)"),
+    y = expression("Latitude ("*degree*"S)")
+  ) +
+  theme_bw()+
+  theme(axis.ticks = element_line(linewidth = 0.2), 
+        legend.position = "none")
+
+ggsave(
+  "02_pipeline/01_data_cleaning/species_populations.png",
+  last_plot(),
+  width = 10,
+  height = 15,
+  units = "cm",
+  dpi = 300)
+```
+
+```{r annual size dist plots with map}
+# set up data 
+d_points <- df_filtered2 |> 
+  select(area, species, year, size_class, total) 
+
+d_lines <- df_filtered2 |> 
+  group_by(area, species, year, size_class) |> 
+  summarise(
+    n_obs_size = sum(total, na.rm = TRUE),
+    .groups = "drop") 
+
+plot_groups <- d_points |> 
+  distinct(species, area)
+
+map_points <- df_filtered2 |> 
+  select(species, site_code, total, population, latitude, longitude) |> 
+  distinct(species, site_code, .keep_all = TRUE)
+
+# loop through species
+pwalk(plot_groups, function(species, area) {
+  
+  point_data <- d_points |> 
+    filter(species == !!species, area == !!area)
+  
+  line_data <- d_lines |> 
+    filter(species == !!species, area == !!area)
+  
+  map_data <- map_points |>
+    filter(species == !!species)
+  
+  point_max <- max(point_data$total, na.rm = TRUE)
+  line_max  <- max(line_data$n_obs_size, na.rm = TRUE)
+  
+  scale_factor <- point_max / line_max
+  
+  pop_palette <- paletteer_d("MetBrewer::Redon")
+  
+  p_years <- ggplot(point_data, aes(x = size_class)) +
+    geom_point(aes(y = total), size = 0.7, alpha = 0.8, shape = 16) +
+    geom_line(
+      data = line_data,
+      aes(y = n_obs_size * scale_factor, group = 1),
+      colour = "darkcyan",
+      linewidth = 0.4) +
+    scale_y_continuous(
+      name = "Total per survey",
+      sec.axis = sec_axis( ~ . / scale_factor, name = "Cumulative total") ) +
+    facet_wrap(~ year, scales = "free_y", ncol = 5) +
+    labs(title = paste0("<i>", species, "</i> | ", area),
+      x = "Size class" ) +
+    theme_bw() +
+    theme(plot.title = ggtext::element_markdown(size = 13),
+      axis.text = element_text(size = 6),
+      strip.text = element_text(size = 8), 
+      axis.title = element_text(size = 12), 
+      panel.grid.minor = element_blank())
+  
+  p_map <- ggplot() +
+    geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+    geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+    geom_point(
+      data = map_data,
+      aes(x = longitude, y = latitude, colour = population),
+      size = 0.8,
+      alpha = 0.8, 
+      shape = 16) +
+    coord_sf(
+      xlim = xlim,
+      ylim = ylim,
+      expand = FALSE) +
+    scale_colour_manual(values = pop_palette) +
+    scale_y_continuous(breaks = seq(-45.5, -10.5, by = 1),
+                       labels = function(x) ifelse(seq_along(x) %% 4 == 1, x, "")) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                     labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+    labs(
+       x = expression("Longitude ("*degree*"E)"),
+        y = expression("Latitude ("*degree*"S)")) +
+    theme_bw() +
+    theme(
+      axis.ticks = element_line(linewidth = 0.2),
+      axis.text = element_text(size = 6),
+      axis.title = element_blank(),
+      strip.text = element_text(size = 8),
+      legend.position = "none")
+  
+  p <- p_years + p_map +
+    plot_layout(widths = c(4, 0.85))
+  
+  file_name <- paste(species, area, sep = "_") |> 
+    str_replace_all("[^A-Za-z0-9]+", "_")
+  
+  ggsave(
+    filename = paste0(
+      "02_pipeline/01_data_cleaning/plots_species_area_map/",
+      file_name,
+      ".png"),
+    plot = p,
+    width = 12,
+    height = 7,
+    dpi = 600 )
+})
+```
+
+```{r species heat maps}
+#set up data 
+data_pop_year <- df_filtered2 |> 
+  group_by(species, population, year) |> 
+  summarise(
+    n_individuals = sum(total, na.rm = TRUE),
+    n_size_classes = n_distinct(size_class),
+    .groups = "drop")|> 
+  separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude) ) |> 
+  arrange(latitude, longitude) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+map_points <- df_filtered2 |> 
+  select(species, site_code, total, population, latitude, longitude) |> 
+  distinct(species, site_code, .keep_all = TRUE)
+
+plot_groups <- data_pop_year |> 
+  distinct(species)
+
+# facet plot 
+data_pop_year |> 
+  #filter(species == "Acanthaluteres vittiger") |> 
+  ggplot(aes(x = year, y = population, fill = n_individuals)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+ scale_fill_paletteer_c("ggthemes::Sunset-Sunrise Diverging")+
+   facet_wrap(~ species,
+             labeller = labeller(species = label_wrap_gen(width = 10)), 
+             ncol = 9, scales = "free") +
+  theme_bw() +
+  labs(
+    x = "Year",
+    y = "Population",
+    fill = "Individuals")+
+  theme(axis.text.y = element_blank())
+
+pop_palette <- paletteer_d("MetBrewer::Redon")
+
+# loop through species
+pwalk(plot_groups, function(species) {
+  
+  hmap <- data_pop_year |> 
+ filter(species == !!species)
+  
+  map_data <- map_points |>
+    filter(species == !!species)
+  
+ p_hmap <-  ggplot(hmap, aes(x = year, y = population, fill = n_individuals)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+ scale_fill_paletteer_c("ggthemes::Sunset-Sunrise Diverging")+
+  theme_bw() +
+  labs(title = paste0("<i>", species, "</i>"),
+    x = "Year",
+    y = "Population",
+    fill = "Individuals")+
+   theme(plot.title = ggtext::element_markdown(size = 13))
+  
+  p_map <- ggplot() +
+    geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+    geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+    geom_point(
+      data = map_data,
+      aes(x = longitude, y = latitude, colour = population),
+      size = 0.8,
+      alpha = 0.8, 
+      shape = 16) +
+    coord_sf(
+      xlim = xlim,
+      ylim = ylim,
+      expand = FALSE) +
+    scale_colour_manual(values = pop_palette) +
+    scale_y_continuous(breaks = seq(-45.5, -10.5, by = 1),
+                       labels = function(x) ifelse(seq_along(x) %% 4 == 1, x, "")) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                     labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+    labs(
+       x = expression("Longitude ("*degree*"E)"),
+        y = expression("Latitude ("*degree*"S)")) +
+    theme_bw() +
+    theme(
+      axis.ticks = element_line(linewidth = 0.2),
+      axis.text = element_text(size = 6),
+      axis.title = element_blank(),
+      strip.text = element_text(size = 8),
+      legend.position = "none")
+  
+  p <- p_hmap + p_map +
+    plot_layout(widths = c(2, 1))
+  
+  file_name <- paste(species) |> 
+    str_replace_all("[^A-Za-z0-9]+", "_")
+  
+  ggsave(
+    filename = paste0(
+      "02_pipeline/01_data_cleaning/plots_species_hmap/",
+      file_name,
+      ".png"),
+    plot = p,
+    width = 12,
+    height = 7,
+    dpi = 600 )
+})
+
+```
+
+```{r final choice species}
+
+# find the species only found on lord howe island
+lhi_only <- df_filtered2 |> 
+  group_by(species) |> 
+  summarise(
+    only_lhi = all(location == "Lord Howe Island"),
+    .groups = "drop"
+  ) |> 
+  filter(only_lhi) |> 
+  pull(species)
+
+# separate them out
+df_isolated <- df_filtered2 |> 
+  filter(species %in% lhi_only)
+
+# separate out all other species
+df_else <- df_filtered2 |> 
+  filter(!species %in% lhi_only)
+
+# summarise lhi only species
+df_isolated_sum <- df_isolated |> 
+  filter(year!=2026) |> 
+  group_by(species) |> 
+  summarise(obs = sum(total), 
+            n_years = n_distinct(year))
+
+# summarise all other species
+df_else_sum <- df_else |> 
+  filter(year!=2026) |> 
+  group_by(species) |> 
+  mutate(n_pop = n_distinct(population)) |> 
+  filter(n_pop >=3) |> 
+  ungroup() |> 
+  group_by(species, population) |> 
+  summarise(obs = sum(total), 
+            n_years = n_distinct(year))
+
+# make species list
+sp_list <- c("Acanthaluteres vittiger", "Achoerodus viridis", "Aplodactylus lophodon", "Atypichthys strigatus", "Caesioperca rasor", "Chromis hypsilepis", "Dinolestes lewini", "Enoplosus armatus", "Hypoplectrodes maccullochi", "Morwong fuscus", "Notolabrus fucicola", "Notolabrus gymnogenis", "Notolabrus tetricus", "Olisthops cyanomelas", "Ophthalmolepis lineolatus", "Ostorhinchus limenus", "Parma microlepis", "Parma unifasciata", "Parupeneus spilurus", "Pempheris affinis", "Pempheris compressa", "Pempheris multiradiata", "Pictilabrus laticlavius", "Prionurus microlepidotus","Schuettea scalaripinnis", "Scorpis aequipinnis", "Scorpis lineolata", "Thalassoma lunare", "Upeneichthys lineatus", "Neoodax balteatus", "Trachinops caudimaculatus", "Trachinops taeniatus")
+
+# lhi only species list
+sp_list_isolated <- c("Pseudolabrus luculentus", "Neoglyphidodon polyacanthus", "Ostorhinchus norfolcensis", "Stegastes gascoynei", "Stegastes fasciolatus", "Prionurus maculatus", "Parma polylepis", "Kyphosus sectatrix", "Chaetodon tricinctus", "Ostorhinchus flavus", "Kyphosus bigibbus", "Anampses elegans")
+
+# make final dfs 
+df_final <- df_filtered2 |> 
+  filter(species %in% sp_list)
+
+df_final_iso <- df_filtered2 |> 
+  filter(species %in% sp_list_isolated)
+
+df_total <- bind_rows(df_final, df_final_iso)
+
+# write_csv(df_final, "0_data/02_data_clean/rls_main_clean.csv")
+# write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean.csv")
+# write_csv(df_total, "0_data/02_data_clean/rls_combo_clean.csv")
+```
+
+```{r size frequency map and heat map plots}
+# set up data 
+d_points <- df_total |> 
+  select(area, species, year, size_class, total) 
+
+d_lines <- df_total |> 
+  group_by(area, species, year, size_class) |> 
+  summarise(
+    n_obs_size = sum(total, na.rm = TRUE),
+    .groups = "drop") 
+
+plot_groups <- d_points |> 
+  distinct(species, area)
+
+map_points <- df_total |> 
+  select(species, site_code, total, population, latitude, longitude) |> 
+  distinct(species, site_code, .keep_all = TRUE)
+
+data_pop_year <- df_total |> 
+  group_by(species, population, year) |> 
+  summarise(
+    n_individuals = sum(total, na.rm = TRUE),
+    n_size_classes = n_distinct(size_class),
+    .groups = "drop")|> 
+  separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude) ) |> 
+  arrange(latitude, longitude) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+
+# loop through species
+pwalk(plot_groups, function(species, area) {
+  
+  point_data <- d_points |> 
+    filter(species == !!species, area == !!area)
+  
+  line_data <- d_lines |> 
+    filter(species == !!species, area == !!area)
+  
+  map_data <- map_points |>
+    filter(species == !!species)
+  
+  hmap <- data_pop_year |> 
+ filter(species == !!species)
+  
+  point_max <- max(point_data$total, na.rm = TRUE)
+  line_max  <- max(line_data$n_obs_size, na.rm = TRUE)
+  
+  scale_factor <- point_max / line_max
+  
+  pop_palette <- paletteer_d("MetBrewer::Redon")
+ 
+ p_hmap <-  ggplot(hmap, aes(x = year, y = population, fill = n_individuals)) +
+  geom_tile(colour = "white", linewidth = 0.2) +
+ scale_fill_paletteer_c("ggthemes::Sunset-Sunrise Diverging")+
+  theme_bw() +
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 5))+
+  labs(
+    x = "Year",
+    y = "Population",
+    fill = "Individuals")+
+   theme(axis.ticks = element_line(linewidth = 0.2),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 7), 
+      legend.title = element_text(size = 7), 
+      legend.text = element_text(size = 6))
+  
+  p_years <- ggplot(point_data, aes(x = size_class)) +
+    geom_point(aes(y = total), size = 0.7, alpha = 0.8, shape = 16) +
+    geom_line(
+      data = line_data,
+      aes(y = n_obs_size * scale_factor, group = 1),
+      colour = "darkcyan",
+      linewidth = 0.4) +
+    scale_y_continuous(
+      name = "Total per survey",
+      sec.axis = sec_axis( ~ . / scale_factor, name = "Cumulative total") ) +
+    facet_wrap(~ year, scales = "free_y", ncol = 5) +
+    labs(title = paste0("<i>", species, "</i> | ", area),
+      x = "Size class" ) +
+    theme_bw() +
+    theme(plot.title = ggtext::element_markdown(size = 13),
+      axis.text = element_text(size = 6),
+      strip.text = element_text(size = 8), 
+      axis.title = element_text(size = 12), 
+      panel.grid.minor = element_blank())
+  
+  p_map <- ggplot() +
+    geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2) +
+    geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+    geom_point(
+      data = map_data,
+      aes(x = longitude, y = latitude, colour = population),
+      size = 0.8,
+      alpha = 0.8, 
+      shape = 16) +
+    coord_sf(
+      xlim = xlim,
+      ylim = ylim,
+      expand = FALSE) +
+    scale_colour_manual(values = pop_palette) +
+    scale_y_continuous(breaks = seq(-45.5, -10.5, by = 1),
+                       labels = function(x) ifelse(seq_along(x) %% 4 == 1, x, "")) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                     labels = function(x) ifelse(seq_along(x) %% 5 == 1, x, "")) +
+    labs(
+       x = expression("Longitude ("*degree*"E)"),
+        y = expression("Latitude ("*degree*"S)")) +
+    theme_bw() +
+    theme(
+      axis.ticks = element_line(linewidth = 0.2),
+      axis.text = element_text(size = 6),
+      axis.title = element_text(size = 7),
+      strip.text = element_text(size = 8),
+      legend.position = "none")
+  
+  p_side <- p_map/p_hmap +plot_layout(heights = c(1.8, 1))
+  
+  p <- p_years + p_side +
+    plot_layout(widths = c(4, 0.85))
+  
+  file_name <- paste(species, area, sep = "_") |> 
+    str_replace_all("[^A-Za-z0-9]+", "_")
+  
+  ggsave(
+    filename = paste0(
+      "02_pipeline/01_data_cleaning/plots_species_area_combo/",
+      file_name,
+      ".png"),
+    plot = p,
+    width = 12,
+    height = 7,
+    dpi = 600 )
+})
 ```
 
