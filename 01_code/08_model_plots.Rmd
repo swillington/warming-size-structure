@@ -1,0 +1,452 @@
+---
+title: "model main plots"
+author: "Sarah Willington"
+date: "2026-09-01"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 10,
+  fig.height = 7,
+  out.width = "100%")
+```
+
+```{r libraries, include=FALSE}
+#install_cmdstan() 
+library(MASS)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+library(paletteer)
+library(ggtext)
+library(gtools)
+library(cmdstanr)
+library(posterior)
+library(cowplot)
+library(bayesplot)
+library(ggrepel)
+library(scales)
+```
+
+```{r set project directory path, include=FALSE}
+
+rm(list = ls())
+project_dir <- here::here()
+
+input_dir <- file.path(project_dir, "02_pipeline", "06_nectar", "stan_fits2")
+output_dir <- file.path(project_dir, "03_graphics")
+stan_file <- "01_code/fish_length_NegBinomial_parallelised_MPA.stan"
+```
+
+
+```{r import fits, include=FALSE}
+fit_files <- list.files(
+  input_dir,
+  pattern = "^fit_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+fits <- lapply(fit_files, readRDS)
+
+names(fits) <- basename(fit_files) |>
+  sub("^fit_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+
+names(fits)
+
+input_files <- list.files(
+  input_dir,
+  pattern = "^model_inputs_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+model_inputs <- lapply(input_files, readRDS)
+
+names(model_inputs) <- basename(input_files) |>
+  sub("^model_inputs_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+max_length <- read_csv(file.path(project_dir, "0_data", "02_data_clean", "species_list.csv")) |> 
+  mutate(max_length = pmax(max_length_fb, max_length_foa, na.rm = TRUE), 
+         fished = case_when(fished_rec == "y" ~ "Yes",
+                            fished_rec == "n" ~ "No"),
+         length_cat = case_when(
+      max_length >= 75 ~ "75+",
+      max_length >= 50 ~ "50-74",
+      max_length >= 40 ~ "40-49",
+      max_length >= 30 ~ "30-39",
+      max_length >= 25 ~ "25-29",
+      max_length >= 20 ~ "20-24",
+      max_length >= 15 ~ "15-19",
+      max_length >= 10 ~ "10-14",
+      TRUE ~ NA_character_)) |> 
+  select(-c(max_length_fb, max_length_foa))
+
+```
+
+
+```{r custom load functions, include=FALSE}
+
+purrr::walk(
+  list.files("01_code/functions", pattern = "\\.R$", full.names = TRUE),
+  source)
+
+```
+
+```{r create df to plot, include=FALSE}
+# extract for SST effect
+df_temperature <- map_dfr(
+  fit_files,
+  model_inputs = model_inputs,
+  ExtractMeanSkewEffect,
+  effect = "temperature")
+
+df_temperature <- df_temperature |> 
+  left_join(max_length, by = "species")
+
+# extract for time effect outside MPA
+df_time <- map_dfr(
+  fit_files,
+  ExtractMeanSkewEffect,
+  model_inputs = model_inputs,
+  effect = "time",
+  mpa_ref = 0)
+
+df_time <- df_time |> 
+  left_join(max_length, by = "species")
+
+# extract time effect inside MPA
+df_time_mpa <- map_dfr(
+  fit_files,
+  ExtractMeanSkewEffect,
+  model_inputs = model_inputs,
+  effect = "time",
+  mpa_ref = 1)
+
+df_time_mpa <- df_time_mpa |> 
+  left_join(max_length, by = "species")
+
+# extract mpa effect at time = 0, i.e., the mid point of the time series
+df_mpa <- map_dfr(
+  fit_files,
+  ExtractMeanSkewEffect,
+  model_inputs = model_inputs,
+  effect = "mpa")
+
+df_mpa <- df_mpa |> 
+  left_join(max_length, by = "species")
+
+df_mpa_2020 <- map_dfr(
+  fit_files,
+  ExtractMeanSkewEffect,
+  model_inputs = model_inputs,
+  effect = "mpa",
+  mpa_year = 2020)
+
+df_mpa_2020 <- df_mpa_2020 |> 
+  left_join(max_length, by = "species")
+```
+
+```{r make plots}
+
+p_temperature <- PlotMeanSkewEffect(
+  df_temperature,
+  title = NULL,
+  xlab = "Change in mean length (%) per +1°C SST",
+  ylab = "Change in skewness (%) per +1°C SST", 
+  labels = F)
+p_temperature <- p_temperature + 
+  scale_x_continuous(breaks = breaks_pretty(6))+
+   scale_y_continuous(breaks = breaks_pretty(5))
+
+p_time <- PlotMeanSkewEffect(
+  df_time, 
+  title = NULL, 
+  xlab = "Change in mean length (%) \nper year outside MPA",
+  ylab = "Change in skewness (%) \nper year outside MPA", 
+  labels = F)
+p_time <- p_time + 
+  scale_y_continuous(limits = c(-5, 5))+
+  scale_x_continuous(limits = c(-5, 7))
+
+p_time_mpa <- PlotMeanSkewEffect(
+  df_time_mpa, 
+  title = NULL,
+  xlab = "Change in mean length (%) \nper year inside MPA",
+  ylab = "Change in skewness (%) \nper year inside MPA", 
+  labels = F)
+p_time_mpa <- p_time_mpa + 
+  scale_y_continuous(limits = c(-5, 5))+
+  scale_x_continuous(limits = c(-5, 7))
+
+p_mpa <- PlotMeanSkewEffect(
+  df_mpa, 
+  title = NULL,
+  xlab = "MPA effect on mean length (%)",
+  ylab = "MPA effect on skewness (%)",
+  labels = F)
+p_mpa <- p_mpa+ scale_x_continuous(breaks = breaks_pretty(6))+
+   scale_y_continuous(breaks = breaks_pretty(5))
+
+p_mpa_2020 <- PlotMeanSkewEffect(
+  df_mpa_2020, 
+  title = NULL,
+  xlab = "MPA effect on mean length (%)",
+  ylab = "MPA effect on skewness (%)",
+  labels = F)
+p_mpa_2020 <- p_mpa_2020+ scale_x_continuous(breaks = breaks_pretty(6))+
+   scale_y_continuous(breaks = breaks_pretty(5))
+
+
+p_grid <- ((p_time+p_time_mpa)/(p_temperature+p_mpa_2020))+
+  plot_layout(guides = "collect") 
+
+p_grid
+
+ggsave(
+  filename = "model_summaries2020_oneCI_bigger.png",
+  plot = p_grid,
+  dpi = 600,
+  path = output_dir,
+  width = 18,
+  height = 16,
+  units = "cm")
+
+```
+
+```{r gamma dist egs}
+
+# Function to convert mean + skewness to gamma parameters
+gamma_pars <- function(mean, skewness) {
+  
+  alpha <- (2 / skewness)^2
+  theta <- mean / alpha
+  
+  tibble(
+    alpha = alpha,
+    theta = theta)
+}
+
+# Baseline
+mean0 <- 25
+skew0 <- 1
+
+# Example changes corresponding to the quadrants
+examples <- tribble(
+  ~quadrant, ~mean_change, ~skew_change,
+  
+  "Larger mean length, more skewed",   20,  30,
+  "Smaller mean length, more skewed", -20,  30,
+  "Smaller mean length, less skewed", -20, -30,
+  "Larger mean length, less skewed",   20, -30) |>
+  mutate(
+    mean = mean0 * (1 + mean_change / 100),
+    skewness = skew0 * (1 + skew_change / 100),
+    alpha = (2 / skewness)^2,
+    theta = mean / alpha) 
+
+x <- seq(0, 80, length.out = 500)
+
+df_dist <- examples |>
+  select(quadrant, alpha, theta) |>
+  crossing(length = x) |>
+  mutate(
+    density = dgamma(
+      length,
+      shape = alpha,
+      scale = theta))
+
+base_pars <- gamma_pars(mean0, skew0)
+
+df_base <- tibble(
+  length = x,
+  density = dgamma(
+    x,
+    shape = base_pars$alpha,
+    scale = base_pars$theta))
+
+
+df_dist <- df_dist |>
+  mutate(
+    quadrant = factor(
+      quadrant,
+      levels = c(
+         "Smaller mean length, more skewed",
+         "Larger mean length, more skewed",
+         "Smaller mean length, less skewed",
+        "Larger mean length, less skewed")))
+
+p_dist <- ggplot(df_dist, aes(length, density)) +
+  geom_area(alpha = 0.3) +
+  geom_line(linewidth = 0.3 ) +
+  geom_line(
+    data = df_base,
+    aes(length, density),
+    inherit.aes = FALSE,
+    linetype = "dashed",
+    linewidth = 0.4,
+    colour = "grey30") +
+  facet_wrap(~quadrant, ncol = 2) +
+  labs(
+    x = "Fish length",
+    y = "Density") +
+  theme_bw()+
+  theme(panel.grid = element_blank(), 
+        strip.text = element_text(size = 6.2, lineheight = 1.1), 
+        axis.title = element_text(size = 8), 
+        axis.title.x = element_text(vjust = -0.5),
+        axis.title.y = element_text(margin = margin(r=6)),
+        #axis.title = element_blank(), 
+        #axis.text = element_text(size = 3.5),
+        axis.text = element_blank(),
+        #axis.ticks = element_line(linewidth = 0.2), 
+        axis.ticks = element_blank(),
+        strip.background = element_rect(colour = NA, fill = "white"),
+        panel.border = element_rect(linewidth = 0.3, fill = NA))
+
+p_dist
+
+ggsave(
+  filename = "example_length_dist2.png",
+  plot = p_dist,
+  dpi = 600,
+  path = output_dir,
+  width = 8,
+  height = 8,
+  units = "cm")
+
+
+p_dist <- df_dist |> filter(quadrant ==  "Smaller mean length, more skewed") |> 
+  ggplot( aes(length, density)) +
+  geom_area(alpha = 0.3) +
+  geom_line(linewidth = 0.3) +
+  geom_line(
+    data = df_base,
+    aes(length, density),
+    inherit.aes = FALSE,
+    linetype = "dashed",
+    linewidth = 0.4,
+    colour = "grey25") +
+  labs(
+    x = "Fish length",
+    y = "Density") +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(), 
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        panel.border = element_blank(), 
+        margins = margin(r=0, l=0, t=0, b=0),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background  = element_rect(fill = "transparent", colour = NA))
+p_dist
+ggsave(
+  filename = "quad1.png",
+  plot = p_dist,
+  dpi = 600,
+  path = output_dir,
+  width = 2,
+  height = 1,
+  units = "cm")
+```
+
+```{r size dist plots fished}
+
+species_a <- "Notolabrus_tetricus"
+#species_a <- "Achoerodus_viridis"
+
+pred_curves <- PredictSpeciesCurves(
+  species = species_a,
+  fit_files = fit_files,
+  model_inputs = model_inputs,
+  master_bins = master_bins,
+  time_years = c(1990, 2000, 2010, 2020),
+  temp_change = c(0, 1, 5, 10),
+  n_draws = 1000,
+  ci_width = 0.80)
+
+p_two_panel <- PlotSpeciesDistribution(
+  pred_curves,
+  show_uncertainty = T) +
+  theme(
+        legend.position = "right", 
+        axis.title = element_text(size = 14, lineheight = 1.2), 
+        axis.text = element_text(size = 13), 
+        legend.title = element_text(size = 14, lineheight = 1.05), 
+        legend.text = element_text(size = 13))
+
+p_two_panel
+
+ggsave(
+  filename = "predicted_sdist_ntetricus.png",
+  plot = p_two_panel,
+  dpi = 600,
+  path = output_dir,
+  width = 20,
+  height = 15,
+  units = "cm")
+```
+
+```{r size dist plots unfished }
+species_b <- "Pictilabrus_laticlavius"
+
+pred_B <- PredictSpeciesDistributions(
+  species = species_b,
+  fit_files = fit_files,
+  model_inputs = model_inputs,
+  master_bins = master_bins,
+  temp_change = c( 0, 0.5, 2, 3),
+  year_change = c( 0, 2, 5, 10), 
+ mpa_years = c(2000, 2010, 2020))
+
+time_ymax_b <- pred_B$curve |>
+  filter(
+    category %in% c(
+      "Time, non-MPA",
+      "Time, MPA")) |>
+  summarise(
+    ymax = max(density_upper, na.rm = TRUE)) |>
+  pull(ymax)
+time_ymax_b <- time_ymax_b * 1.05
+
+# temp non mpa
+p_dist_temp_b<- PlotSpeciesDistribution(
+  pred_B,
+  category = "Temperature", 
+  show_curve_uncertainty = T)
+
+# time non mpa
+p_dist_time_nonmpa_b <- PlotSpeciesDistribution(
+  pred_B,
+  category = "Time, non-MPA", 
+  ymax = time_ymax_b)
+
+# time inside mpa
+p_dist_time_mpa_b <- PlotSpeciesDistribution(
+  pred_B,
+  category = "Time, MPA", 
+  ymax = time_ymax_b)
+
+p_dist_mpa_b <- PlotMPAEffect(pred_B)
+
+p_dist_grid_b <- ((p_dist_time_nonmpa_b+p_dist_time_mpa_b)/(p_dist_temp_b+p_dist_mpa_b))+
+  plot_annotation(tag_levels = "A")
+p_dist_grid_b
+
+ggsave(
+  filename = "predicted_sdist_platiclavius.png",
+  plot = p_dist_grid_b,
+  dpi = 600,
+  path = output_dir,
+  width = 20,
+  height = 15,
+  units = "cm")
+```
+

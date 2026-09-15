@@ -1,0 +1,120 @@
+---
+title: "Model trace plots by species"
+subtitle: "Willington et al. 2026"
+output: 
+  pdf_document:
+    fig_caption: false
+geometry: margin=1in
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 8,
+  fig.height = 10, out.width = "100%")
+```
+
+
+
+```{r libraries, include=FALSE}
+library(MASS)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+library(paletteer)
+library(ggtext)
+library(gtools)
+library(cmdstanr)
+library(posterior)
+library(cowplot)
+library(bayesplot)
+library(ggrepel)
+```
+
+```{r set project directory path, include=FALSE}
+
+rm(list = ls())
+project_dir <- here::here()
+
+input_dir <- file.path(project_dir, "02_pipeline", "06_nectar", "stan_fits2")
+output_dir <- file.path(project_dir, "02_pipeline", "07_model_fits")
+stan_file <- "01_code/fish_length_NegBinomial_parallelised_MPA.stan"
+```
+
+
+```{r import fits, include=FALSE}
+fit_files <- list.files(
+  input_dir,
+  pattern = "^fit_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE)
+
+fits <- lapply(fit_files, readRDS)
+
+names(fits) <- basename(fit_files) |>
+  sub("^fit_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+
+names(fits)
+
+input_files <- list.files(
+  input_dir,
+  pattern = "^model_inputs_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE)
+
+model_inputs <- lapply(input_files, readRDS)
+
+names(model_inputs) <- basename(input_files) |>
+  sub("^model_inputs_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+
+file_list <- list.files(input_dir, 
+                        pattern = "^summary_.*\\.csv$", 
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+model_summaries <- map_dfr(file_list, 
+                           \(file){read_csv(file) |> 
+                               mutate(species = basename(dirname(file)), .before = 1)})
+```
+
+
+```{r custom load functions, include=FALSE}
+
+purrr::walk(
+  list.files("01_code/functions", pattern = "\\.R$", full.names = TRUE),
+  source)
+
+```
+
+```{r trace-plots, results='asis', echo=FALSE}
+species_list <- names(fits)
+
+pars = c("beta_mu_zS",   
+         "beta_alpha_zS", "beta_mu_dT", "beta_alpha_dT", 
+         "beta_mu_MPA", "beta_alpha_MPA", 
+         "beta_mu_MPA_dT", "beta_alpha_MPA_dT")
+
+for (species_a in species_list){
+  
+trace_plot <- plot_traces(fits[[species_a]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed", linewidth = 0.9)+
+   ggtitle(gsub("_", " ", species_a))+
+  scale_x_continuous(breaks = c(0, 1000, 2000, 3000))+
+  theme(plot.title = element_text(face = "italic", size = 16), 
+        legend.position = "right", 
+        axis.title = element_text(size = 14, lineheight = 1.2), 
+        axis.text = element_text(size = 13), 
+        legend.title = element_text(size = 14, lineheight = 1.05), 
+        legend.text = element_text(size = 13), 
+        strip.text = element_text(size = 13))
+
+  
+   print(trace_plot)
+}
+
+```
+

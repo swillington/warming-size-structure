@@ -1,0 +1,582 @@
+---
+title: "sample summary plot"
+author: "Sarah Willington"
+date: "2026-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 10,
+  fig.height = 7,
+  out.width = "100%")
+```
+
+```{r libraries, include=FALSE}
+library(MASS)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+library(paletteer)
+library(ggtext)
+library(gtools)
+library(cowplot)
+library(ggrepel)
+library(scales)
+
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+```{r set project directory path, include=FALSE}
+
+rm(list = ls())
+project_dir <- here::here()
+
+input_dir <- file.path(project_dir, "0_data", "02_data_clean", "by_species")
+output_dir <- file.path(project_dir, "03_graphics")
+```
+
+
+```{r load data, include=FALSE}
+
+df_total <- read_csv(file.path(project_dir,"0_data/02_data_clean/rls_combo_clean_sst_mpa.csv"))
+latlon <- read_csv(file.path(project_dir,"0_data","01_data_raw", "population_sites_HadISST.csv" ))
+
+noaa_sst <- read_csv(file.path(project_dir,"0_data/01_data_raw/oisst_summary/oisst_annual_by_box.csv")) |> 
+  rename(population = box_id)
+```
+
+
+```{r basic temp plot for paper}
+
+# create plotting dataset
+noaa_plot <- noaa_sst |> 
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  arrange(desc(latitude)) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+#set colour palette
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF","#2B1B5A"  )
+
+# sst plot by population
+  pl <- ggplot(noaa_plot, aes(year, sst_mean_annual,  colour = population))+
+  geom_line(linewidth = 0.3)+
+   scale_color_manual(values = pal)+
+  labs(x = "Year", y = expression("Mean annual SST ( " * degree * "C)"), colour = "Population")+
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 6))+
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 6))+
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.2)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size =13 ),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9), 
+    axis.title.x = element_blank())
+pl
+
+pl <- pl + theme(legend.position = "none")
+
+ggsave(
+  "03_graphics/sst_base_NOAA_oisst.png",
+  pl,
+  width = 7,
+  height = 7,
+  dpi = 600,
+  units = "cm")
+```
+
+```{r map of population locs}
+
+mpa_list <- df_total|> select(rls_mpa) |> 
+  distinct(rls_mpa)
+
+jervis_bay_bounds <- list(
+  lon_min = 150.58333,  # 150°35'E
+  lon_max = 150.84685,  # 150°50.811'E, approx eastern labelled zone edge
+  lat_min = -35.21342,  # 35°12.805'S
+  lat_max = -34.96333)   # 34°57.800'S
+
+batemans_marine_park_bounds <- list(
+  lon_min = 149.91667,  # 149°55'E
+  lon_max = 150.50000,  # 150°30'E
+  lat_min = -36.41667,  # 36°25'S
+  lat_max = -35.50000 )  # 35°30'S
+
+solitary_islands_bounds <- list(
+  lon_min = 153.08333,  # 153°05'E
+  lon_max = 153.50000,  # 153°30'E
+  lat_min = -30.30508,  # 30°18.305'S, around Coffs Harbour/Muttonbird Island
+  lat_max = -29.66667)   # 29°40'S
+
+port_stephens_great_lakes_bounds <- list(
+  lon_min = 151.91667,  # 151°55'E
+  lon_max = 152.62938,  # 152°37.763'E
+  lat_min = -32.83333,  # 32°50'S
+  lat_max = -32.19655)   # 32°11.793'S
+
+lord_howe_island_bounds <- list(
+  lon_min = 159.04340,  # 159°02.604'E
+  lon_max = 159.11667,  # 159°07'E
+  lat_min = -31.59722,  # 31°35.833'S
+  lat_max = -31.48333)   # 31°29'S
+
+beware_reef_bounds <- list(
+  lon_min = 148.77833,
+  lon_max = 148.79556,
+  lat_min = -37.82806,
+  lat_max = -37.81444)
+
+bunurong_mnp_bounds <- list(
+  lon_min = 145.63167,
+  lon_max = 145.67383,
+  lat_min = -38.72533,
+  lat_max = -38.66667)
+
+point_hicks_bounds <- list(
+  lon_min = 149.21500,
+  lon_max = 149.29583,
+  lat_min = -37.85033,
+  lat_max = -37.77717)
+
+tinderbox_bounds <- list(
+  lon_min = 147.32187,
+  lon_max = 147.34778,
+  lat_min = -43.06307,
+  lat_max = -43.02767)
+
+governor_island_bounds <- list(
+  lon_min = 148.31242,
+  lon_max = 148.31756,
+  lat_min = -41.87818,
+  lat_max = -41.86693)
+
+kent_group_bounds <- list(
+  lon_min = 147.19,
+  lon_max = 147.43,
+  lat_min = -39.55,
+  lat_max = -39.38)
+
+port_davey_bounds <- list(
+  lon_min = 145.83,
+  lon_max = 146.26,
+  lat_min = -43.38,
+  lat_max = -43.22)
+
+port_phillip_heads_sections <- tibble::tribble(
+  ~section,         ~lon_min,   ~lon_max,   ~lat_min,    ~lat_max,
+  "Point Lonsdale", 144.60233,  144.63400,  -38.30067,  -38.28950,
+  "Point Nepean",   144.64000,  144.68717,  -38.32383,  -38.30450,
+  "Swan Bay",       144.60967,  144.70150,  -38.27333,  -38.20933,
+  "Mud Islands",    144.75283,  144.78217,  -38.28300,  -38.26000,
+  "Portsea Hole",   144.70917,  144.71433,  -38.31567,  -38.30950)
+
+marine_sanctuary_bounds <- tibble::tribble(
+  ~reserve,          ~lon_min,    ~lon_max,    ~lat_min,    ~lat_max,
+  "Ricketts Point MS", 145.01444, 145.04000,   -37.99917,   -37.98083)
+
+wilsons_prom_mnp_bounds <- list(
+  lon_min = 146.22316,
+  lon_max = 146.47984,
+  lat_min = -39.18617,
+  lat_max = -39.04100)
+
+cabbage_tree_bay_bounds <- list(
+  lon_min = 151.29078,  # 151°17.447'E
+  lon_max = 151.30012,  # 151°18.007'E
+  lat_min = -33.80094,  # 33°48.057'S
+  lat_max = -33.79827)  # 33°47.896'S
+
+shiprock_bounds <- list(
+  lon_min = 151.12850,  # 151°7.710'E
+  lon_max = 151.13060,  # 151°7.836'E
+  lat_min = -34.07020,  # 34°4.212'S
+  lat_max = -34.06790)  # 34°4.074'S
+
+bushrangers_bay_bounds <- list(
+  lon_min = 150.89960,  # 150°53.976'E
+  lon_max = 150.90370,  # 150°54.222'E
+  lat_min = -34.59870,  # 34°35.922'S
+  lat_max = -34.59700)  # 34°35.820'S
+  
+crayfish_point_bounds <- list(
+  lon_min = 147.35100,  # 147°21.060'E
+  lon_max = 147.36600,  # 147°21.960'E
+  lat_min = -42.96000,  # 42°57.600'S
+  lat_max = -42.94850)  # 42°56.910'S
+
+# helper to convert list bounds to one-row tibble
+bounds_row <- function(x, reserve) {
+  tibble::tibble(
+    reserve = reserve,
+    lon_min = x$lon_min,
+    lon_max = x$lon_max,
+    lat_min = x$lat_min,
+    lat_max = x$lat_max)
+}
+
+# combine all MPA bounds into one tibble
+mpa_bounds <- bind_rows(
+  bounds_row(tinderbox_bounds, "Tinderbox"),
+  bounds_row(governor_island_bounds, "Governor Island"),
+  bounds_row(kent_group_bounds, "Kent Group"),
+  bounds_row(port_davey_bounds, "Port Davey"),
+  bounds_row(beware_reef_bounds, "Beware Reef"),
+  bounds_row(bunurong_mnp_bounds, "Bunurong MNP"),
+  bounds_row(point_hicks_bounds, "Point Hicks"),
+  bounds_row(wilsons_prom_mnp_bounds, "Wilsons Promontory MNP"),
+  bounds_row(solitary_islands_bounds, "Solitary Islands Marine Park"),
+  bounds_row(port_stephens_great_lakes_bounds, "Port Stephens-Great Lakes Marine Park"),
+  bounds_row(lord_howe_island_bounds, "Lord Howe Island Marine Park"),
+  bounds_row(jervis_bay_bounds, "Jervis Bay Marine Park"),
+  bounds_row(batemans_marine_park_bounds, "Batemans Marine Park"),
+  bounds_row(cabbage_tree_bay_bounds, "Cabbage tree bay"),
+  bounds_row(shiprock_bounds, "Ship rock aquatic reserve"),
+  bounds_row(bushrangers_bay_bounds, "Bushrangers bay aquatic reserve"),
+  bounds_row(crayfish_point_bounds, "Cray fish point reserve"),
+
+  port_phillip_heads_sections |>
+    transmute(
+      reserve = paste("Port Phillip Heads", section, sep = " - "),
+      lon_min, lon_max, lat_min, lat_max),
+
+  marine_sanctuary_bounds |>
+    select(reserve, lon_min, lon_max, lat_min, lat_max))
+
+# convert bounding boxes to sf polygons
+mpa_boxes_sf <- mpa_bounds |>
+  mutate(
+    geometry = pmap(
+      list(lon_min, lon_max, lat_min, lat_max),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin),
+            ncol = 2,
+            byrow = TRUE))) })) |>
+  st_as_sf(crs = 4326)
+
+# change population for map legend
+latlon2 <- latlon |>
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  arrange(desc(latitude)) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+# get polygons of each population
+population_grid_sf <- latlon2 |>
+  mutate(
+    geometry = pmap(
+      list(lonmin, lonmax, latmin, latmax),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin
+            ),
+            ncol = 2,
+            byrow = TRUE
+          )
+        ))
+      }
+    )
+  ) |>
+  st_as_sf(crs = 4326)
+
+# get land layers
+# Australia land
+aus_continent <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+aus_whole <- st_crop(aus_continent, xmin = 110, xmax = 160, ymin = -50, ymax = -8)
+
+# Crop to southeastern Australia / Tasmania
+aus <- st_crop(
+  aus_continent,
+  xmin = 135, xmax = 155,
+  ymin = -45, ymax = -20)
+
+# state boundaries
+aus_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+    xmin = 135, xmax = 155,
+    ymin = -45, ymax = -20 )
+
+zoom_bbox_sf <- st_as_sfc(
+  st_bbox(
+    c(
+      xmin = 143,
+      ymin = -44,
+      xmax = 159.5,
+      ymax = -28),
+    crs = st_crs(4326))) |>
+  st_sf(geometry = _)
+
+
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF","#2B1B5A"  )
+
+# map plot showing populations
+p_population_map <- ggplot() +
+  geom_sf(
+    data = population_grid_sf,
+    aes(fill = population),
+    colour = NA, alpha = 0.8) +
+  geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.15, alpha = 1) +
+  geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.1) +
+  geom_sf(
+    data = mpa_boxes_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "solid") +
+  scale_fill_manual( values = pal,name = "Population") +
+  coord_sf(
+        xlim = c(143, 160),
+        ylim =c(-45, -28),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "none",
+    panel.grid.major = element_line(linewidth = 0.2, colour = scales::alpha("grey50", 0.15)), 
+    margins = margin(r=8, l=8), 
+    axis.title = element_text(size = 9), 
+    axis.text = element_text(size = 7))
+p_population_map
+
+# p_population_map <- p_population_map +
+#   geom_point(data = df_total, aes(y=latitude, x=longitude), size = 0.01)
+
+ggsave(
+  "03_graphics/population_map2.png",
+  p_population_map,
+  width = 6,
+  height = 10,
+  dpi = 600,
+  units = "cm")
+
+# Inset (whole Australia) plot with zoom box highlighted
+p_inset <- ggplot() +
+  geom_sf(data = aus_whole, fill = "grey85", linewidth = 0.1) +
+  geom_sf(data = zoom_bbox_sf, fill = NA, linewidth = 0.3, colour = "black") +
+  coord_sf(xlim = c(112, 160),
+           ylim = c(-45, -8),expand = FALSE) +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = "white", linewidth = 0.4))
+p_inset
+
+ggsave(
+  "03_graphics/map_inset.png",
+  p_inset,
+  width = 6,
+  height = 4,
+  dpi = 600,
+  units = "cm")
+
+```
+
+```{r}
+
+species_lat <- df_total |>
+  group_by(species, population) |>
+  summarise(
+    population_latitude = mean(latitude, na.rm = TRUE),
+    .groups = "drop") |>
+  group_by(species) |>
+  summarise(
+    mean_latitude = mean(population_latitude),
+    .groups = "drop")
+
+population_lat <- df_total |>
+  group_by(species, population) |>
+  summarise(
+    population_latitude = mean(latitude, na.rm = TRUE),
+    .groups = "drop")
+
+df_ts <- df_total |>
+  group_by(species, population) |>
+  summarise(
+    year_start = min(year, na.rm = TRUE),
+    year_end   = max(year, na.rm = TRUE),
+    .groups = "drop") |>
+  left_join(species_lat, by = "species") |>
+  left_join(population_lat, by = c("species", "population")) |>
+  mutate(
+    species = forcats::fct_reorder(species, mean_latitude),
+    species_id = as.numeric(species)) |>
+  group_by(species) |>
+  arrange(population_latitude, .by_group = TRUE) |>
+  mutate(
+    y_pos = species_id * 6 +
+      (row_number() - (n() + 1) / 2) * 0.8) |>
+  ungroup()
+
+
+p_ts <- ggplot(df_ts) +
+  geom_segment(
+    aes(
+      x = year_start,
+      xend = year_end,
+      y = y_pos,
+      yend = y_pos,
+      colour = population ),
+    linewidth = 1) +
+  scale_y_continuous(
+    breaks = sort(unique(df_ts$species_id))*6,
+    labels = levels(df_ts$species) ) +
+  scale_x_continuous(
+  breaks = pretty(c(df_ts$year_start, df_ts$year_end),, n = 6))+
+  scale_colour_manual(values = pal) +
+  labs(
+    x = "Year",
+    y = NULL,
+    colour = "Population") +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    panel.grid = element_blank(), 
+    axis.text.y = element_text(face = "italic"), 
+    legend.position = "none")
+
+p_ts
+
+# ggsave(
+#   "03_graphics/species_ts.png",
+#   p_ts,
+#   width = 12,
+#   height = 16,
+#   dpi = 600,
+#   units = "cm")
+
+pop_lats <- tribble(~ population, ~ mid_lat,
+                    "-30_153",            -30, 
+                    "-32_159",            -32,
+                    "-33_152 ",            -33,
+                    "-34_151 ",            -34,
+                    "-35_151 ",            -35,
+                    "-36_150 ",            -36,
+                    "-38_145 ",            -38,
+                    "-39_146 ",            -39,
+                    "-42_148 ",            -42,
+                    "-43_147 ",            -43,)
+
+species_lat_med <- df_total |>
+  group_by(species) |>
+  summarise(
+    median_latitude = median(latitude),
+    .groups = "drop")
+
+df_ts2 <- df_total |>
+  group_by(species) |>
+  summarise(
+    year_start = min(year, na.rm = TRUE),
+    year_end   = max(year, na.rm = TRUE),
+    .groups = "drop") |> 
+  left_join(species_lat_med, by = "species") 
+
+df_ts2 <- df_ts2 |>
+  tidyr::crossing(pop_lats) |>
+  mutate(
+    lat_difference = abs(median_latitude - mid_lat)) |>
+  group_by(species) |>
+  slice_min(lat_difference, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(
+    species = forcats::fct_reorder(species, median_latitude))
+
+pal2 <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF",    "#2B9B81FF",  "#1F6E9CFF", "#633372FF"  )
+
+p_ts <- ggplot(df_ts2) +
+  geom_segment(
+    aes(
+      x = year_start,
+      xend = year_end,
+      y = species,
+      yend = species,
+      colour = population),
+    linewidth = 2) +
+  scale_x_continuous(
+  breaks = pretty(c(df_ts$year_start, df_ts$year_end), n = 6))+
+  scale_colour_manual(values = pal2) +
+  labs(
+    x = "Year",
+    y = NULL,
+    colour = "Population") +
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    panel.grid = element_blank(), 
+    axis.text.y = element_text(face = "italic", size = 9), 
+    legend.position = "none", 
+    axis.title = element_text(size = 16))
+
+p_ts
+
+ggsave(
+  "03_graphics/species_ts_median.png",
+  p_ts,
+  width = 12,
+  height = 14,
+  dpi = 600,
+  units = "cm")
+```
+
+
+```{r}
+temp <- df_total |> 
+  group_by(species) |> 
+  summarise(mean_temp = mean(sst_year_noaa),  
+              max_temp = max(sst_year_noaa), 
+            min_temp = min(sst_year_noaa), 
+            temp_range = max_temp - min_temp)
+```
+

@@ -1,0 +1,1474 @@
+---
+title: "model outputs"
+author: "Sarah Willington"
+date: "2026-08-27"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 10,
+  fig.height = 7,
+  out.width = "100%")
+```
+
+```{r libraries, include=FALSE}
+#install_cmdstan() 
+library(MASS)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+library(paletteer)
+library(ggtext)
+library(gtools)
+library(cmdstanr)
+library(posterior)
+library(cowplot)
+library(bayesplot)
+library(ggrepel)
+```
+
+```{r set project directory path}
+
+rm(list = ls())
+project_dir <- here::here()
+
+input_dir <- file.path(project_dir, "02_pipeline", "06_nectar", "stan_fits2")
+output_dir <- file.path(project_dir, "02_pipeline", "07_model_fits")
+stan_file <- "01_code/fish_length_NegBinomial_parallelised_MPA.stan"
+```
+
+
+```{r custom load functions, include=FALSE}
+
+purrr::walk(
+  list.files("01_code/functions", pattern = "\\.R$", full.names = TRUE),
+  source)
+
+```
+
+```{r import fits, include=FALSE}
+fit_files <- list.files(
+  input_dir,
+  pattern = "^fit_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE)
+
+fits <- lapply(fit_files, readRDS)
+
+names(fits) <- basename(fit_files) |>
+  sub("^fit_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+
+names(fits)
+
+input_files <- list.files(
+  input_dir,
+  pattern = "^model_inputs_.*\\.rds$",
+  recursive = TRUE,
+  full.names = TRUE)
+
+model_inputs <- lapply(input_files, readRDS)
+
+names(model_inputs) <- basename(input_files) |>
+  sub("^model_inputs_", "", x = _) |>
+  sub("\\.rds$", "", x = _)
+
+
+file_list <- list.files(input_dir, 
+                        pattern = "^summary_.*\\.csv$", 
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+model_summaries <- map_dfr(file_list, 
+                           \(file){read_csv(file) |> 
+                               mutate(species = basename(dirname(file)), .before = 1)})
+
+#write_csv(model_summaries, file.path(input_dir, "model_summaries.csv"))
+```
+
+```{r trace plots}
+pars = c("beta_mu_zS",   
+         "beta_alpha_zS", "beta_mu_dT", "beta_alpha_dT", 
+         "beta_mu_MPA", "beta_alpha_MPA", 
+         "beta_mu_MPA_dT", "beta_alpha_MPA_dT")
+
+# Acanthaluteres_vittiger
+fits[["Acanthaluteres_vittiger"]]$diagnostic_summary()
+
+plot_traces(fits[["Acanthaluteres_vittiger"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Achoerodus_viridis
+fits[["Achoerodus_viridis"]]$diagnostic_summary()
+
+plot_traces(fits[["Achoerodus_viridis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Anampses_elegans
+fits[["Anampses_elegans"]]$diagnostic_summary()
+
+plot_traces(fits[["Anampses_elegans"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Aplodactylus_lophodon
+fits[["Aplodactylus_lophodon"]]$diagnostic_summary()
+
+plot_traces(fits[["Aplodactylus_lophodon"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Atypichthys_strigatus
+fits[["Atypichthys_strigatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Atypichthys_strigatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+ggsave("a.strigatus.png", 
+       last_plot(), 
+       path = output_dir)
+
+# Caesioperca_rasor
+fits[["Caesioperca_rasor"]]$diagnostic_summary()
+
+plot_traces(fits[["Caesioperca_rasor"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Chaetodon_tricinctus
+fits[["Chaetodon_tricinctus"]]$diagnostic_summary()
+
+plot_traces(fits[["Chaetodon_tricinctus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Chromis_hypsilepis
+fits[["Chromis_hypsilepis"]]$diagnostic_summary()
+
+plot_traces(fits[["Chromis_hypsilepis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Dinolestes_lewini
+fits[["Dinolestes_lewini"]]$diagnostic_summary()
+
+plot_traces(fits[["Dinolestes_lewini"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+ggsave("D.lewini.png", 
+       last_plot(), 
+       path = output_dir)
+
+# Enoplosus_armatus
+fits[["Enoplosus_armatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Enoplosus_armatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Hypoplectrodes_maccullochi
+fits[["Hypoplectrodes_maccullochi"]]$diagnostic_summary()
+
+plot_traces(fits[["Hypoplectrodes_maccullochi"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Kyphosus_bigibbus
+fits[["Kyphosus_bigibbus"]]$diagnostic_summary()
+
+plot_traces(fits[["Kyphosus_bigibbus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Kyphosus_sectatrix
+fits[["Kyphosus_sectatrix"]]$diagnostic_summary()
+
+plot_traces(fits[["Kyphosus_sectatrix"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Morwong_fuscus
+fits[["Morwong_fuscus"]]$diagnostic_summary()
+
+plot_traces(fits[["Morwong_fuscus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Neoglyphidodon_polyacanthus
+fits[["Neoglyphidodon_polyacanthus"]]$diagnostic_summary()
+
+plot_traces(fits[["Neoglyphidodon_polyacanthus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Neoodax_balteatus
+fits[["Neoodax_balteatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Neoodax_balteatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Notolabrus_fucicola
+fits[["Notolabrus_fucicola"]]$diagnostic_summary()
+
+plot_traces(fits[["Notolabrus_fucicola"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+# Notolabrus_gymnogenis
+fits[["Notolabrus_gymnogenis"]]$diagnostic_summary()
+
+plot_traces(fits[["Notolabrus_gymnogenis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Notolabrus_tetricus
+fits[["Notolabrus_tetricus"]]$diagnostic_summary()
+
+plot_traces(fits[["Notolabrus_tetricus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Olisthops_cyanomelas
+fits[["Olisthops_cyanomelas"]]$diagnostic_summary()
+
+plot_traces(fits[["Olisthops_cyanomelas"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Ophthalmolepis_lineolatus
+fits[["Ophthalmolepis_lineolatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Ophthalmolepis_lineolatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Ostorhinchus_flavus
+fits[["Ostorhinchus_flavus"]]$diagnostic_summary()
+
+plot_traces(fits[["Ostorhinchus_flavus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Ostorhinchus_limenus
+fits[["Ostorhinchus_limenus"]]$diagnostic_summary()
+
+plot_traces(fits[["Ostorhinchus_limenus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Ostorhinchus_norfolcensis
+fits[["Ostorhinchus_norfolcensis"]]$diagnostic_summary()
+
+plot_traces(fits[["Ostorhinchus_norfolcensis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Parma_microlepis
+fits[["Parma_microlepis"]]$diagnostic_summary()
+
+plot_traces(fits[["Parma_microlepis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Parma_polylepis
+fits[["Parma_polylepis"]]$diagnostic_summary()
+
+plot_traces(fits[["Parma_polylepis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Parma_unifasciata
+fits[["Parma_unifasciata"]]$diagnostic_summary()
+
+plot_traces(fits[["Parma_unifasciata"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Parupeneus_spilurus
+fits[["Parupeneus_spilurus"]]$diagnostic_summary()
+
+plot_traces(fits[["Parupeneus_spilurus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Pempheris_affinis
+fits[["Pempheris_affinis"]]$diagnostic_summary()
+
+plot_traces(fits[["Pempheris_affinis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Pempheris_compressa
+fits[["Pempheris_compressa"]]$diagnostic_summary()
+
+plot_traces(fits[["Pempheris_compressa"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Pempheris_multiradiata
+fits[["Pempheris_multiradiata"]]$diagnostic_summary()
+
+plot_traces(fits[["Pempheris_multiradiata"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Pictilabrus_laticlavius
+fits[["Pictilabrus_laticlavius"]]$diagnostic_summary()
+
+plot_traces(fits[["Pictilabrus_laticlavius"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Prionurus_maculatus
+fits[["Prionurus_maculatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Prionurus_maculatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Prionurus_microlepidotus
+fits[["Prionurus_microlepidotus"]]$diagnostic_summary()
+
+plot_traces(fits[["Prionurus_microlepidotus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Pseudolabrus_luculentus
+fits[["Pseudolabrus_luculentus"]]$diagnostic_summary()
+
+plot_traces(fits[["Pseudolabrus_luculentus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Schuettea_scalaripinnis
+fits[["Schuettea_scalaripinnis"]]$diagnostic_summary()
+
+plot_traces(fits[["Schuettea_scalaripinnis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Scorpis_aequipinnis
+fits[["Scorpis_aequipinnis"]]$diagnostic_summary()
+
+plot_traces(fits[["Scorpis_aequipinnis"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Scorpis_lineolata
+fits[["Scorpis_lineolata"]]$diagnostic_summary()
+
+plot_traces(fits[["Scorpis_lineolata"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Stegastes_fasciolatus
+fits[["Stegastes_fasciolatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Stegastes_fasciolatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Stegastes_gascoynei
+fits[["Stegastes_gascoynei"]]$diagnostic_summary()
+
+plot_traces(fits[["Stegastes_gascoynei"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Thalassoma_lunare
+fits[["Thalassoma_lunare"]]$diagnostic_summary()
+
+plot_traces(fits[["Thalassoma_lunare"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Trachinops_caudimaculatus
+fits[["Trachinops_caudimaculatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Trachinops_caudimaculatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Trachinops_taeniatus
+fits[["Trachinops_taeniatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Trachinops_taeniatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+
+#Upeneichthys_lineatus
+fits[["Upeneichthys_lineatus"]]$diagnostic_summary()
+
+plot_traces(fits[["Upeneichthys_lineatus"]], pars) +
+  geom_hline(yintercept = 0,linetype = "dashed")
+```
+
+```{r posterior predictive check}
+#Acanthaluteres_vittiger
+avi_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Acanthaluteres_vittiger"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Acanthaluteres_vittiger"]]$stan_data, 
+  species = "Acanthaluteres_vittiger"
+)
+avi_prior_post
+
+#Achoerodus_viridis
+avir_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Achoerodus_viridis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Achoerodus_viridis"]]$stan_data, 
+  species = "Achoerodus_viridis"
+)
+avir_prior_post
+
+#Anampses_elegans
+ael_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Anampses_elegans"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Anampses_elegans"]]$stan_data, 
+  species = "Anampses_elegans"
+)
+ael_prior_post
+
+#Aplodactylus_lophodon
+alo_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Aplodactylus_lophodon"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Aplodactylus_lophodon"]]$stan_data, 
+  species = "Aplodactylus_lophodon"
+)
+alo_prior_post
+
+#Atypichthys_strigatus
+ast_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Atypichthys_strigatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Atypichthys_strigatus"]]$stan_data, 
+  species = "Atypichthys_strigatus"
+)
+ast_prior_post
+
+#Caesioperca_rasor
+cra_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Caesioperca_rasor"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Caesioperca_rasor"]]$stan_data, 
+  species = "Caesioperca_rasor"
+)
+cra_prior_post
+
+#Chaetodon_tricinctus
+ctr_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Chaetodon_tricinctus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Chaetodon_tricinctus"]]$stan_data, 
+  species = "Chaetodon_tricinctus"
+)
+ctr_prior_post
+
+#Chromis_hypsilepis
+chy_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Chromis_hypsilepis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Chromis_hypsilepis"]]$stan_data, 
+  species = "Chromis_hypsilepis"
+)
+chy_prior_post
+
+#Dinolestes_lewini
+dle_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Dinolestes_lewini"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Dinolestes_lewini"]]$stan_data, 
+  species = "Dinolestes_lewini"
+)
+dle_prior_post
+
+#Enoplosus_armatus
+ear_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Enoplosus_armatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Enoplosus_armatus"]]$stan_data, 
+  species = "Enoplosus_armatus"
+)
+ear_prior_post
+
+#Hypoplectrodes_maccullochi
+hma_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Hypoplectrodes_maccullochi"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Hypoplectrodes_maccullochi"]]$stan_data, 
+  species = "Hypoplectrodes_maccullochi"
+)
+hma_prior_post
+
+#Kyphosus_bigibbus
+kbi_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Kyphosus_bigibbus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Kyphosus_bigibbus"]]$stan_data, 
+  species = "Kyphosus_bigibbus"
+)
+kbi_prior_post
+
+#Kyphosus_sectatrix
+kse_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Kyphosus_sectatrix"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Kyphosus_sectatrix"]]$stan_data, 
+  species = "Kyphosus_sectatrix"
+)
+kse_prior_post
+
+#Morwong_fuscus
+mfu_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Morwong_fuscus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Morwong_fuscus"]]$stan_data, 
+  species = "Morwong_fuscus"
+)
+mfu_prior_post
+
+#Neoglyphidodon_polyacanthus
+npo_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Neoglyphidodon_polyacanthus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Neoglyphidodon_polyacanthus"]]$stan_data, 
+  species = "Neoglyphidodon_polyacanthus"
+)
+npo_prior_post
+
+#Neoodax_balteatus
+nba_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Neoodax_balteatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Neoodax_balteatus"]]$stan_data, 
+  species = "Neoodax_balteatus"
+)
+nba_prior_post
+
+#Notolabrus_fucicola
+nfu_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Notolabrus_fucicola"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Notolabrus_fucicola"]]$stan_data, 
+  species = "Notolabrus_fucicola"
+)
+nfu_prior_post
+
+#Notolabrus_gymnogenis
+ngy_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Notolabrus_gymnogenis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Notolabrus_gymnogenis"]]$stan_data, 
+  species = "Notolabrus_gymnogenis"
+)
+ngy_prior_post
+
+#Notolabrus_tetricus
+nte_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Notolabrus_tetricus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Notolabrus_tetricus"]]$stan_data, 
+  species = "Notolabrus_tetricus"
+)
+nte_prior_post
+
+#Olisthops_cyanomelas
+ocy_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Olisthops_cyanomelas"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Olisthops_cyanomelas"]]$stan_data, 
+  species = "Olisthops_cyanomelas"
+)
+ocy_prior_post
+
+#Ophthalmolepis_lineolatus
+oli_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Ophthalmolepis_lineolatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Ophthalmolepis_lineolatus"]]$stan_data, 
+  species = "Ophthalmolepis_lineolatus"
+)
+oli_prior_post
+
+#Ostorhinchus_flavus
+ofl_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Ostorhinchus_flavus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Ostorhinchus_flavus"]]$stan_data, 
+  species = "Ostorhinchus_flavus"
+)
+ofl_prior_post
+
+#Ostorhinchus_limenus
+olim_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Ostorhinchus_limenus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Ostorhinchus_limenus"]]$stan_data, 
+  species = "Ostorhinchus_limenus"
+)
+olim_prior_post
+
+#Ostorhinchus_norfolcensis
+ono_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Ostorhinchus_norfolcensis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Ostorhinchus_norfolcensis"]]$stan_data, 
+  species = "Ostorhinchus_norfolcensis"
+)
+ono_prior_post
+
+#Parma_microlepis
+pmi_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Parma_microlepis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Parma_microlepis"]]$stan_data, 
+  species = "Parma_microlepis"
+)
+pmi_prior_post
+
+#Parma_polylepis
+ppo_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Parma_polylepis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Parma_polylepis"]]$stan_data, 
+  species = "Parma_polylepis"
+)
+ppo_prior_post
+
+#Parma_unifasciata
+pun_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Parma_unifasciata"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Parma_unifasciata"]]$stan_data, 
+  species = "Parma_unifasciata"
+)
+pun_prior_post
+
+#Parupeneus_spilurus
+psp_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Parupeneus_spilurus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Parupeneus_spilurus"]]$stan_data, 
+  species = "Parupeneus_spilurus"
+)
+psp_prior_post
+
+#Pempheris_affinis
+paf_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Pempheris_affinis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Pempheris_affinis"]]$stan_data, 
+  species = "Pempheris_affinis"
+)
+paf_prior_post
+
+#Pempheris_compressa
+pco_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Pempheris_compressa"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Pempheris_compressa"]]$stan_data, 
+  species = "Pempheris_compressa"
+)
+pco_prior_post
+
+#Pempheris_multiradiata
+pmu_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Pempheris_multiradiata"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Pempheris_multiradiata"]]$stan_data, 
+  species = "Pempheris_multiradiata"
+)
+pmu_prior_post
+
+#Pictilabrus_laticlavius
+pla_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Pictilabrus_laticlavius"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Pictilabrus_laticlavius"]]$stan_data, 
+  species = "Pictilabrus_laticlavius"
+)
+pla_prior_post
+
+#Prionurus_maculatus
+pma_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Prionurus_maculatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Prionurus_maculatus"]]$stan_data, 
+  species = "Prionurus_maculatus"
+)
+pma_prior_post
+
+#Prionurus_microlepidotus
+pmi_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Prionurus_microlepidotus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Prionurus_microlepidotus"]]$stan_data, 
+  species = "Prionurus_microlepidotus"
+)
+pmi_prior_post
+
+#Pseudolabrus_luculentus
+plu_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Pseudolabrus_luculentus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Pseudolabrus_luculentus"]]$stan_data, 
+  species = "Pseudolabrus_luculentus"
+)
+plu_prior_post
+
+#Schuettea_scalaripinnis
+ssc_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Schuettea_scalaripinnis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Schuettea_scalaripinnis"]]$stan_data, 
+  species = "Schuettea_scalaripinnis"
+)
+ssc_prior_post
+
+#Scorpis_aequipinnis
+sae_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Scorpis_aequipinnis"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Scorpis_aequipinnis"]]$stan_data, 
+  species = "Scorpis_aequipinnis"
+)
+sae_prior_post
+
+#Scorpis_lineolata
+sli_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Scorpis_lineolata"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Scorpis_lineolata"]]$stan_data, 
+  species = "Scorpis_lineolata"
+)
+sli_prior_post
+
+#Stegastes_fasciolatus
+sfa_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Stegastes_fasciolatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Stegastes_fasciolatus"]]$stan_data, 
+  species = "Stegastes_fasciolatus"
+)
+sfa_prior_post
+
+#Stegastes_gascoynei
+sga_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Stegastes_gascoynei"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Stegastes_gascoynei"]]$stan_data, 
+  species = "Stegastes_gascoynei"
+)
+sga_prior_post
+
+#Thalassoma_lunare
+tlu_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Thalassoma_lunare"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Thalassoma_lunare"]]$stan_data, 
+  species = "Thalassoma_lunare"
+)
+tlu_prior_post
+
+#Trachinops_caudimaculatus
+tca_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Trachinops_caudimaculatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Trachinops_caudimaculatus"]]$stan_data, 
+  species = "Trachinops_caudimaculatus"
+)
+tca_prior_post
+
+#Trachinops_taeniatus
+tta_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Trachinops_taeniatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Trachinops_taeniatus"]]$stan_data, 
+  species = "Trachinops_taeniatus"
+)
+tta_prior_post
+
+#Upeneichthys_lineatus
+uli_prior_post <- FishLengthPriorPosteriorPlot(
+  stan_fit = fits[["Upeneichthys_lineatus"]],
+  stan_code = stan_file,
+  data_list = model_inputs[["Upeneichthys_lineatus"]]$stan_data, 
+  species = "Upeneichthys_lineatus"
+)
+uli_prior_post
+```
+
+```{r model vs data}
+# Acanthaluteres_vittiger ----
+avi_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Acanthaluteres_vittiger"]],
+  stan_data = model_inputs[["Acanthaluteres_vittiger"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+avi_ppc_check$bins
+avi_ppc_check$bins_counts
+avi_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(avi_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(avi_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(avi_ppc_check$simulation, sample_id = 50)
+
+# Achoerodus_viridis ----
+avir_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Achoerodus_viridis"]],
+  stan_data = model_inputs[["Achoerodus_viridis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+avir_ppc_check$bins
+avir_ppc_check$bins_counts
+avir_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(avir_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(avir_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(avir_ppc_check$simulation, sample_id = 50)
+
+# Anampses_elegans ----
+ael_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Anampses_elegans"]],
+  stan_data = model_inputs[["Anampses_elegans"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ael_ppc_check$bins
+ael_ppc_check$bins_counts
+ael_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ael_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ael_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(ael_ppc_check$simulation, sample_id = 20)
+
+# Aplodactylus_lophodon ----
+alo_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Aplodactylus_lophodon"]],
+  stan_data = model_inputs[["Aplodactylus_lophodon"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+alo_ppc_check$bins
+alo_ppc_check$bins_counts
+alo_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(alo_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(alo_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(alo_ppc_check$simulation, sample_id = 50)
+
+# Atypichthys_strigatus ----
+ast_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Atypichthys_strigatus"]],
+  stan_data = model_inputs[["Atypichthys_strigatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ast_ppc_check$bins
+ast_ppc_check$bins_counts
+ast_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ast_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ast_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(ast_ppc_check$simulation, sample_id = 50)
+
+# Caesioperca_rasor ----
+cra_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Caesioperca_rasor"]],
+  stan_data = model_inputs[["Caesioperca_rasor"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+cra_ppc_check$bins
+cra_ppc_check$bins_counts
+cra_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(cra_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(cra_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(cra_ppc_check$simulation, sample_id = 50)
+
+# Chaetodon_tricinctus ----
+ctr_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Chaetodon_tricinctus"]],
+  stan_data = model_inputs[["Chaetodon_tricinctus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ctr_ppc_check$bins
+ctr_ppc_check$bins_counts
+ctr_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ctr_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ctr_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(ctr_ppc_check$simulation, sample_id = 20)
+
+# Chromis_hypsilepis ----
+chy_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Chromis_hypsilepis"]],
+  stan_data = model_inputs[["Chromis_hypsilepis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+chy_ppc_check$bins
+chy_ppc_check$bins_counts
+chy_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(chy_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(chy_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(chy_ppc_check$simulation, sample_id = 50)
+
+# Dinolestes_lewini ----
+dle_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Dinolestes_lewini"]],
+  stan_data = model_inputs[["Dinolestes_lewini"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+dle_ppc_check$bins
+dle_ppc_check$bins_counts
+dle_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(dle_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(dle_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(dle_ppc_check$simulation, sample_id = 50)
+
+# Enoplosus_armatus ----
+ear_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Enoplosus_armatus"]],
+  stan_data = model_inputs[["Enoplosus_armatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ear_ppc_check$bins
+ear_ppc_check$bins_counts
+ear_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ear_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ear_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(ear_ppc_check$simulation, sample_id = 50)
+
+# Hypoplectrodes_maccullochi ----
+hma_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Hypoplectrodes_maccullochi"]],
+  stan_data = model_inputs[["Hypoplectrodes_maccullochi"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+hma_ppc_check$bins
+hma_ppc_check$bins_counts
+hma_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(hma_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(hma_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(hma_ppc_check$simulation, sample_id = 50)
+
+# Kyphosus_bigibbus ----
+kbi_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Kyphosus_bigibbus"]],
+  stan_data = model_inputs[["Kyphosus_bigibbus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+kbi_ppc_check$bins
+kbi_ppc_check$bins_counts
+kbi_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(kbi_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(kbi_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(kbi_ppc_check$simulation, sample_id = 20)
+
+# Kyphosus_sectatrix ----
+kse_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Kyphosus_sectatrix"]],
+  stan_data = model_inputs[["Kyphosus_sectatrix"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+kse_ppc_check$bins
+kse_ppc_check$bins_counts
+kse_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(kse_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(kse_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(kse_ppc_check$simulation, sample_id = 20)
+
+# Morwong_fuscus ----
+mfu_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Morwong_fuscus"]],
+  stan_data = model_inputs[["Morwong_fuscus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+mfu_ppc_check$bins
+mfu_ppc_check$bins_counts
+mfu_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(mfu_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(mfu_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(mfu_ppc_check$simulation, sample_id = 50)
+
+# Neoglyphidodon_polyacanthus ----
+npo_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Neoglyphidodon_polyacanthus"]],
+  stan_data = model_inputs[["Neoglyphidodon_polyacanthus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+npo_ppc_check$bins
+npo_ppc_check$bins_counts
+npo_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(npo_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(npo_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(npo_ppc_check$simulation, sample_id = 20)
+
+# Neoodax_balteatus ----
+nba_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Neoodax_balteatus"]],
+  stan_data = model_inputs[["Neoodax_balteatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+nba_ppc_check$bins
+nba_ppc_check$bins_counts
+nba_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(nba_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(nba_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(nba_ppc_check$simulation, sample_id = 50)
+
+# Notolabrus_fucicola ----
+nfu_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Notolabrus_fucicola"]],
+  stan_data = model_inputs[["Notolabrus_fucicola"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+nfu_ppc_check$bins
+nfu_ppc_check$bins_counts
+nfu_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(nfu_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(nfu_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(nfu_ppc_check$simulation, sample_id = 50)
+
+# Notolabrus_gymnogenis ----
+ngy_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Notolabrus_gymnogenis"]],
+  stan_data = model_inputs[["Notolabrus_gymnogenis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ngy_ppc_check$bins
+ngy_ppc_check$bins_counts
+ngy_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ngy_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ngy_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(ngy_ppc_check$simulation, sample_id = 50)
+
+# Notolabrus_tetricus ----
+nte_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Notolabrus_tetricus"]],
+  stan_data = model_inputs[["Notolabrus_tetricus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+nte_ppc_check$bins
+nte_ppc_check$bins_counts
+nte_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(nte_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(nte_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(nte_ppc_check$simulation, sample_id = 50)
+
+# Olisthops_cyanomelas ----
+ocy_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Olisthops_cyanomelas"]],
+  stan_data = model_inputs[["Olisthops_cyanomelas"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ocy_ppc_check$bins
+ocy_ppc_check$bins_counts
+ocy_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ocy_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ocy_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(ocy_ppc_check$simulation, sample_id = 50)
+
+# Ophthalmolepis_lineolatus ----
+oli_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Ophthalmolepis_lineolatus"]],
+  stan_data = model_inputs[["Ophthalmolepis_lineolatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+oli_ppc_check$bins
+oli_ppc_check$bins_counts
+oli_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(oli_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(oli_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(oli_ppc_check$simulation, sample_id = 50)
+
+# Ostorhinchus_flavus ----
+ofl_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Ostorhinchus_flavus"]],
+  stan_data = model_inputs[["Ostorhinchus_flavus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ofl_ppc_check$bins
+ofl_ppc_check$bins_counts
+ofl_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ofl_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ofl_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(ofl_ppc_check$simulation, sample_id = 9)
+
+# Ostorhinchus_limenus ----
+olim_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Ostorhinchus_limenus"]],
+  stan_data = model_inputs[["Ostorhinchus_limenus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+olim_ppc_check$bins
+olim_ppc_check$bins_counts
+olim_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(olim_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(olim_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(olim_ppc_check$simulation, sample_id = 50)
+
+# Ostorhinchus_norfolcensis ----
+ono_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Ostorhinchus_norfolcensis"]],
+  stan_data = model_inputs[["Ostorhinchus_norfolcensis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ono_ppc_check$bins
+ono_ppc_check$bins_counts
+ono_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ono_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ono_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(ono_ppc_check$simulation, sample_id = 7)
+
+# Parma_microlepis ----
+pmi_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Parma_microlepis"]],
+  stan_data = model_inputs[["Parma_microlepis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pmi_ppc_check$bins
+pmi_ppc_check$bins_counts
+pmi_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pmi_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pmi_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pmi_ppc_check$simulation, sample_id = 50)
+
+# Parma_polylepis ----
+ppo_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Parma_polylepis"]],
+  stan_data = model_inputs[["Parma_polylepis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ppo_ppc_check$bins
+ppo_ppc_check$bins_counts
+ppo_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ppo_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ppo_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(ppo_ppc_check$simulation, sample_id = 20)
+
+# Parma_unifasciata ----
+pun_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Parma_unifasciata"]],
+  stan_data = model_inputs[["Parma_unifasciata"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pun_ppc_check$bins
+pun_ppc_check$bins_counts
+pun_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pun_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pun_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pun_ppc_check$simulation, sample_id = 50)
+
+# Parupeneus_spilurus ----
+psp_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Parupeneus_spilurus"]],
+  stan_data = model_inputs[["Parupeneus_spilurus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+psp_ppc_check$bins
+psp_ppc_check$bins_counts
+psp_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(psp_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(psp_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(psp_ppc_check$simulation, sample_id = 50)
+
+# Pempheris_affinis ----
+paf_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Pempheris_affinis"]],
+  stan_data = model_inputs[["Pempheris_affinis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+paf_ppc_check$bins
+paf_ppc_check$bins_counts
+paf_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(paf_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(paf_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(paf_ppc_check$simulation, sample_id = 50)
+
+# Pempheris_compressa ----
+pco_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Pempheris_compressa"]],
+  stan_data = model_inputs[["Pempheris_compressa"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pco_ppc_check$bins
+pco_ppc_check$bins_counts
+pco_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pco_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pco_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pco_ppc_check$simulation, sample_id = 50)
+
+# Pempheris_multiradiata ----
+pmu_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Pempheris_multiradiata"]],
+  stan_data = model_inputs[["Pempheris_multiradiata"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pmu_ppc_check$bins
+pmu_ppc_check$bins_counts
+pmu_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pmu_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pmu_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pmu_ppc_check$simulation, sample_id = 50)
+
+# Pictilabrus_laticlavius ----
+pla_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Pictilabrus_laticlavius"]],
+  stan_data = model_inputs[["Pictilabrus_laticlavius"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pla_ppc_check$bins
+pla_ppc_check$bins_counts
+pla_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pla_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pla_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pla_ppc_check$simulation, sample_id = 50)
+
+# Prionurus_maculatus ----
+pma_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Prionurus_maculatus"]],
+  stan_data = model_inputs[["Prionurus_maculatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pma_ppc_check$bins
+pma_ppc_check$bins_counts
+pma_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pma_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pma_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(pma_ppc_check$simulation, sample_id = 20)
+
+# Prionurus_microlepidotus ----
+pmic_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Prionurus_microlepidotus"]],
+  stan_data = model_inputs[["Prionurus_microlepidotus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+pmic_ppc_check$bins
+pmic_ppc_check$bins_counts
+pmic_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(pmic_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(pmic_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(pmic_ppc_check$simulation, sample_id = 50)
+
+# Pseudolabrus_luculentus ----
+plu_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Pseudolabrus_luculentus"]],
+  stan_data = model_inputs[["Pseudolabrus_luculentus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+plu_ppc_check$bins
+plu_ppc_check$bins_counts
+plu_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(plu_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(plu_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(plu_ppc_check$simulation, sample_id = 20)
+
+# Schuettea_scalaripinnis ----
+ssc_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Schuettea_scalaripinnis"]],
+  stan_data = model_inputs[["Schuettea_scalaripinnis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+ssc_ppc_check$bins
+ssc_ppc_check$bins_counts
+ssc_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(ssc_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(ssc_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(ssc_ppc_check$simulation, sample_id = 50)
+
+# Scorpis_aequipinnis ----
+sae_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Scorpis_aequipinnis"]],
+  stan_data = model_inputs[["Scorpis_aequipinnis"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+sae_ppc_check$bins
+sae_ppc_check$bins_counts
+sae_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(sae_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(sae_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(sae_ppc_check$simulation, sample_id = 50)
+
+# Scorpis_lineolata ----
+sli_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Scorpis_lineolata"]],
+  stan_data = model_inputs[["Scorpis_lineolata"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+sli_ppc_check$bins
+sli_ppc_check$bins_counts
+sli_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(sli_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(sli_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(sli_ppc_check$simulation, sample_id = 50)
+
+# Stegastes_fasciolatus ----
+sfa_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Stegastes_fasciolatus"]],
+  stan_data = model_inputs[["Stegastes_fasciolatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+sfa_ppc_check$bins
+sfa_ppc_check$bins_counts
+sfa_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(sfa_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(sfa_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(sfa_ppc_check$simulation, sample_id = 20)
+
+# Stegastes_gascoynei ----
+sga_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Stegastes_gascoynei"]],
+  stan_data = model_inputs[["Stegastes_gascoynei"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+sga_ppc_check$bins
+sga_ppc_check$bins_counts
+sga_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(sga_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(sga_ppc_check$simulation, sample_id = 15)
+# PPCPlotSample(sga_ppc_check$simulation, sample_id = 20)
+
+# Thalassoma_lunare ----
+tlu_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Thalassoma_lunare"]],
+  stan_data = model_inputs[["Thalassoma_lunare"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+tlu_ppc_check$bins
+tlu_ppc_check$bins_counts
+tlu_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(tlu_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(tlu_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(tlu_ppc_check$simulation, sample_id = 50)
+
+# Trachinops_caudimaculatus ----
+tca_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Trachinops_caudimaculatus"]],
+  stan_data = model_inputs[["Trachinops_caudimaculatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+tca_ppc_check$bins
+tca_ppc_check$bins_counts
+tca_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(tca_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(tca_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(tca_ppc_check$simulation, sample_id = 50)
+
+# Trachinops_taeniatus ----
+tta_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Trachinops_taeniatus"]],
+  stan_data = model_inputs[["Trachinops_taeniatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+tta_ppc_check$bins
+tta_ppc_check$bins_counts
+tta_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(tta_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(tta_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(tta_ppc_check$simulation, sample_id = 50)
+
+# Upeneichthys_lineatus ----
+uli_ppc_check <- PosteriorPredictiveCheck(
+  stan_fit = fits[["Upeneichthys_lineatus"]],
+  stan_data = model_inputs[["Upeneichthys_lineatus"]]$stan_data,
+  ndraws = 500,
+  seed = 123)
+
+uli_ppc_check$bins
+uli_ppc_check$bins_counts
+uli_ppc_check$statistics
+
+# # Individual observations
+# PPCPlotSample(uli_ppc_check$simulation, sample_id = 1)
+# PPCPlotSample(uli_ppc_check$simulation, sample_id = 150)
+# PPCPlotSample(uli_ppc_check$simulation, sample_id = 50)
+```
+
