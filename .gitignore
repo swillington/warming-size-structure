@@ -61,7 +61,7 @@ rsconnect/
 .RData
 .Rproj.user/
 0_data/01_data_raw/
-0_data/01_data_clean/
+0_data/02_data_clean/
 03_graphics/
 02_pipeline/
 01_code/archive_old_functions_and_code
