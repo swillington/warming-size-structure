@@ -1,0 +1,556 @@
+---
+title: "downloading NOAA SST data"
+author: "Sarah Willington"
+date: "2026-06-11"
+output: html_document
+---
+
+# R Script for Targeted NOAA SST Data Download
+
+This script downloads NOAA OISST SST data for a specified
+date range and geographic region from the thredds server. Datasets/noaa.oisst.v2.highres/sst.day.mean
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r libraries}
+
+library(tidyverse)
+library(terra)
+library(lubridate)
+library(janitor)
+library(glue)
+library(fs)
+library(httr2)     # For string manipulation
+library(here)
+library(ncdf4)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(cowplot)
+library(patchwork)
+```
+
+```{r set directories}
+# Set directories
+project_dir <- here::here()
+
+latlon <- read_csv(file.path(project_dir,"0_data","01_data_raw", "population_sites_IMOS.csv" ))
+```
+
+
+```{r}
+# Download NOAA OISST v2.1 regional subsets using THREDDS NCSS
+# Then calculate mean SST for each lat/lon bounding box
+
+# -----------------------------
+# 1. Inputs
+# -----------------------------
+
+years <- 1992:2025
+
+nc_dir  <- "0_data/01_data_raw/oisst_subset_nc"
+out_dir <- "0_data/01_data_raw/oisst_summary"
+
+
+latlon <- latlon |>
+  clean_names() |>
+  rename(
+    box_id  = population,  # change this if your ID column has another name
+    lat_min = latmin,
+    lat_max = latmax,
+    lon_min = lonmin,
+    lon_max = lonmax
+  ) |>
+  mutate(
+    lat_min = as.numeric(lat_min),
+    lat_max = as.numeric(lat_max),
+    lon_min = as.numeric(lon_min),
+    lon_max = as.numeric(lon_max)
+  )
+
+# -----------------------------
+# 2. Convert longitude to OISST convention
+# -----------------------------
+# OISST uses 0–360 longitude, not -180–180.
+# Eastern Australia longitudes are already positive, so this mostly matters
+# if any longitudes are negative.
+
+lon_to_360 <- function(x) {
+  if_else(x < 0, x + 360, x)
+}
+
+latlon <- latlon |>
+  mutate(
+    lon_min_360 = lon_to_360(lon_min),
+    lon_max_360 = lon_to_360(lon_max)
+  )
+
+# -----------------------------
+# 3. Make one regional bounding box
+# -----------------------------
+# This downloads the smallest rectangle that contains all your boxes.
+# Add a small buffer so edge grid cells are not missed.
+
+buffer <- 0.25
+
+regional_box <- latlon |>
+  summarise(
+    south = max(min(lat_min, na.rm = TRUE) - buffer, -89.875),
+    north = min(max(lat_max, na.rm = TRUE) + buffer,  89.875),
+    west  = max(min(lon_min_360, na.rm = TRUE) - buffer, 0.125),
+    east  = min(max(lon_max_360, na.rm = TRUE) + buffer, 359.875)
+  )
+
+regional_box
+
+# -----------------------------
+# 4. Function to download one yearly regional subset
+# -----------------------------
+
+download_oisst_subset_month <- function(year, month, regional_box) {
+  
+  base_url <- glue(
+    "https://www.psl.noaa.gov/thredds/ncss/grid/",
+    "Datasets/noaa.oisst.v2.highres/sst.day.mean.{year}.nc"
+  )
+  
+  start_date <- as.Date(glue("{year}-{str_pad(month, 2, pad = '0')}-01"))
+  end_date   <- ceiling_date(start_date, "month") - days(1)
+  
+  dest <- file.path(
+    nc_dir,
+    glue("oisst_sst_subset_{year}_{str_pad(month, 2, pad = '0')}.nc")
+  )
+  
+  if (file.exists(dest)) {
+    message("Already downloaded: ", basename(dest))
+    return(dest)
+  }
+  
+  message("Downloading ", year, "-", str_pad(month, 2, pad = "0"))
+  
+  req <- request(base_url) |>
+    req_url_query(
+      var = "sst",
+      north = regional_box$north,
+      west  = regional_box$west,
+      east  = regional_box$east,
+      south = regional_box$south,
+      horizStride = 1,
+      time_start = glue("{start_date}T00:00:00Z"),
+      time_end   = glue("{end_date}T00:00:00Z"),
+      timeStride = 1,
+      accept = "netcdf3"
+    ) |>
+    req_retry(
+      max_tries = 5,
+      backoff = ~ 10
+    )
+  
+  # This prints the actual URL without performing the download
+  # useful for debugging
+  # req_dry_run(req)
+  
+  req_perform(req, path = dest)
+  
+  dest
+}
+
+download_grid <- tidyr::expand_grid(
+  year = years,
+  month = 1:12)
+
+# run the download function
+nc_files <- pmap_chr(
+  download_grid,
+  \(year, month) {
+    download_oisst_subset_month(
+      year = year,
+      month = month,
+      regional_box = regional_box
+    )
+  }
+)
+
+#test plot temp across regional box
+test <- rast(nc_files, subds = "sst")
+test
+plot(test[[1]])
+
+# convert to correct lat and lons FUNCTION
+read_oisst_fixed <- function(nc_file) {
+  
+  # read SST
+  r <- rast(nc_file, subds = "sst")
+  
+  # read actual lon/lat coordinates from NetCDF
+  nc <- ncdf4::nc_open(nc_file)
+  on.exit(ncdf4::nc_close(nc))
+  
+  lon <- ncdf4::ncvar_get(nc, "lon")
+  lat <- ncdf4::ncvar_get(nc, "lat")
+  
+  dx <- median(diff(sort(unique(lon))))
+  dy <- median(diff(sort(unique(lat))))
+  
+  # set extent using cell edges, not centres
+  ext(r) <- ext(
+    min(lon) - dx / 2,
+    max(lon) + dx / 2,
+    min(lat) - dy / 2,
+    max(lat) + dy / 2
+  )
+  
+  crs(r) <- "EPSG:4326"
+  
+  r
+}
+
+# convert to correct lat and lons
+r <- read_oisst_fixed(nc_files[1])
+
+ext(r)
+res(r)
+crs(r)
+
+# create df
+r_df <- as.data.frame(r[[1]], xy = TRUE, na.rm = FALSE)
+names(r_df)[3] <- "sst"
+
+latlon_plot <- latlon |>
+  mutate(
+    lat_lower = pmin(lat_min, lat_max),
+    lat_upper = pmax(lat_min, lat_max),
+    lon_lower = pmin(lon_min_360, lon_max_360),
+    lon_upper = pmax(lon_min_360, lon_max_360))
+
+# check convert worked
+ggplot() +
+  geom_raster(
+    data = r_df,
+    aes(x = x, y = y, fill = sst)) +
+  geom_rect(
+    data = latlon_plot,
+    aes(
+      xmin = lon_lower,
+      xmax = lon_upper,
+      ymin = lat_lower,
+      ymax = lat_upper ),
+    fill = NA,
+    colour = "red",
+    linewidth = 0.5) +
+  coord_equal() +
+  scale_fill_viridis_c(na.value = "white") +
+  theme_bw()
+```
+
+```{r}
+# -----------------------------
+# 5. Extract mean SST per box
+# -----------------------------
+
+extract_box_sst <- function(nc_file, box_row) {
+  
+  message("Extracting ", box_row$box_id, " from ", basename(nc_file))
+  
+  sst <- read_oisst_fixed(nc_file)
+  
+  sst_crop <- crop(
+    sst,
+    ext(
+      box_row$lon_min,
+      box_row$lon_max,
+      box_row$lat_min,
+      box_row$lat_max
+    )
+  )
+  
+  sst_mean <- global(sst_crop, fun = "mean", na.rm = TRUE)
+  
+  tibble(
+    box_id = box_row$box_id,
+    date = as.Date(time(sst_crop)),
+    sst_mean = as.numeric(sst_mean[, 1])
+  )
+}
+
+oisst_daily <- map_dfr(nc_files, function(nc_file) {
+  map_dfr(seq_len(nrow(latlon)), function(i) {
+    extract_box_sst(nc_file, latlon[i, ])
+  })
+})
+
+# -----------------------------
+# 6. Summarise and save
+# -----------------------------
+
+oisst_daily <- oisst_daily |>
+  mutate(
+    year = year(date),
+    month = month(date)) 
+
+oisst_monthly <- oisst_daily |>
+  group_by(box_id, year, month) |>
+  summarise(
+    sst_mean_monthly = mean(sst_mean, na.rm = TRUE),
+    .groups = "drop" ) 
+
+oisst_annual <- oisst_daily |>
+  group_by(box_id, year) |>
+  summarise(
+    sst_mean_annual = mean(sst_mean, na.rm = TRUE),
+    .groups = "drop") 
+
+# write_csv(oisst_daily,   file.path(out_dir, "oisst_daily_by_box.csv"))
+# write_csv(oisst_monthly, file.path(out_dir, "oisst_monthly_by_box.csv"))
+# write_csv(oisst_annual,  file.path(out_dir, "oisst_annual_by_box.csv"))
+```
+
+
+### temperature plot
+
+```{r basic temp plot for paper}
+
+# create plotting dataset
+oisst_plot <- oisst_annual |> 
+  rename(population = box_id) |> 
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  arrange(desc(latitude)) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+#set colour palette
+pal <- paletteer_d("MetBrewer::Signac")
+
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF","#2B1B5A"  )
+
+# sst plot by population
+  pl <- ggplot(oisst_plot, aes(year, sst_mean_annual,  colour = population))+
+  geom_line(linewidth = 0.3)+
+   scale_color_manual(values = pal)+
+  labs(x = "Year", y = expression("Mean annual SST ( " * degree * "C)"), colour = "Population")+
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 6))+
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 6))+
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.2)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size =9 ),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9), 
+    axis.title.x = element_blank())
+pl
+
+# ggsave(
+#   "03_graphics/sst_base_NOAA_oisst.png",
+#   pl,
+#   width = 11,
+#   height = 10,
+#   dpi = 600,
+#   units = "cm"
+# )
+
+# create plotting dataset
+oisst_plot_daily <- oisst_daily |> 
+  rename(population = box_id) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+# sst daily plot by population
+  pl_daily <- ggplot(oisst_plot_daily, aes(date, sst_mean, group = population, colour = population))+
+  geom_line(linewidth = 0.25, alpha = 0.7)+
+   scale_color_manual(values = pal)+
+  labs(x = NULL, y = expression("Daily SST ( " * degree * "C)"), colour = "Population")+
+  scale_x_date(
+    date_breaks = "5 years",
+    date_labels = "%Y",
+    expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 6))+
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.2, alpha = 1)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size =9 ),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9), 
+    axis.title.x = element_blank())
+pl_daily
+
+# plot monthly SST
+oisst_plot_month <- oisst_daily |> 
+  rename(population = box_id) |> 
+  mutate(
+    year = lubridate::year(date),
+    month = lubridate::month(date),
+    date_month = as.Date(paste(year, month, "01", sep = "-")) ) |> 
+  group_by(population, date_month) |> 
+  summarise( sst_mean_monthly = mean(sst_mean, na.rm = TRUE),
+    .groups = "drop" ) |> 
+  mutate(
+    population = factor(population, levels = unique(population)) )
+
+pl_month <- ggplot(
+  oisst_plot_month,
+  aes(x = date_month, y = sst_mean_monthly, group = population, colour = population)) +
+  geom_line(linewidth = 0.35, alpha = 0.85) +
+  scale_color_manual(values = pal) +
+  labs(
+    x = NULL,
+    y = expression("Mean monthly SST (" * degree * "C)"),
+    colour = "Population" ) +
+  scale_x_date(
+    date_breaks = "5 years",
+    date_labels = "%Y",
+    expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(
+    breaks = scales::breaks_pretty(n = 6)) +
+  guides(
+    colour = guide_legend(override.aes = list(linewidth = 1.2, alpha = 1))) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size = 9),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9))
+
+pl_month
+```
+
+
+```{r map of population locs}
+latlon <- read_csv(file.path(project_dir,"0_data","01_data_raw", "population_sites_IMOS.csv" ))
+
+# change population for map legend
+latlon2 <- latlon |>
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  arrange(desc(latitude)) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+# get polygons of each population
+population_grid_sf <- latlon2 |>
+  mutate(
+    geometry = pmap(
+      list(lonmin, lonmax, latmin, latmax),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin
+            ),
+            ncol = 2,
+            byrow = TRUE
+          )
+        ))
+      }
+    )
+  ) |>
+  st_as_sf(crs = 4326)
+
+# get land layers
+# Australia land
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to southeastern Australia / Tasmania
+aus <- st_crop(
+  aus,
+  xmin = 135, xmax = 155,
+  ymin = -45, ymax = -20)
+
+# state boundaries
+aus_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+    xmin = 135, xmax = 155,
+    ymin = -45, ymax = -20 )
+
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF","#2B1B5A"  )
+
+# map plot showing populations
+p_population_map <- ggplot() +
+  geom_sf(
+    data = population_grid_sf,
+    aes(fill = population),
+    colour = NA, alpha = 1) +
+  geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  scale_fill_manual( values = pal,name = "Population") +
+  coord_sf(
+        xlim = c(143, 160),
+        ylim =c(-45, -28),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+p_population_map
+
+# combine with temperature plot
+pl <- pl+ theme_bw()+theme(legend.position = "none", panel.grid.minor = element_blank(),panel.grid.major = element_line(linewidth = 0.2),)
+
+map_plots <- pl+p_population_map
+
+# ggsave(
+#   "03_graphics/population_map_NOAA_oisst.png",
+#   p_population_map,
+#   width = 10,
+#   height = 9.5,
+#   dpi = 600,
+#   units = "cm"
+# )
+# 
+# ggsave(
+#   "03_graphics/sst_population_map_NOAA_oisst.png",
+#   map_plots,
+#   width = 20,
+#   height = 9.5,
+#   dpi = 600,
+#   units = "cm"
+# )
+```

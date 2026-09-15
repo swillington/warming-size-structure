@@ -71,19 +71,22 @@ df <- read_csv(
   rename_with(~ str_remove_all(.x, '"')) |> 
   mutate(across(where(is.character), ~ str_remove_all(.x, '"')))
 
+df2 <- df |> select(-FID) |> 
+  distinct() #remove duplicate rows
+
 # filter for areas of interest and for fish only. 
 # remove size class 0 
 # create year col
 # remove unwanted cols
 # make necessary cols numeric
-df2 <- df |> 
+df2 <- df2 |> 
   filter(area == "New South Wales" | area == "Victoria" | area == "Tasmania") |> # SE aus temperate regions
   filter(method == 1) |> 
   filter(class == "Actinopteri" | class == "Actinopterygii" | class == "Teleostei") |> 
   filter(species_name!="Actinopterygii spp.") |> 
   filter(size_class!=0) |> 
   separate(survey_date, c('year', 'month', 'day'), sep='-', remove=TRUE) |> 
-  select(-c(FID, country, realm, block, reporting_name, geom, visibility, survey_latitude, survey_longitude)) |>  
+  select(-c( country, realm, block, reporting_name, geom, visibility, survey_latitude, survey_longitude)) |>  
   mutate(latitude = as.numeric(latitude), 
          longitude = as.numeric(longitude), 
          year = as.numeric(year), 
@@ -121,12 +124,13 @@ df_pop <- df2 |>
 # Keep species × population × year combinations with at least 50 individuals
 # spread across at least 5 size classes.
 # Then keep only species × population combinations with at least 10 years of data.
-df_filtered <- df_pop |> 
+df_filtered <- df_pop |>  
+  filter(year!=2026) |> 
   group_by(species, population, year) |> 
   mutate(n_obs_pop = sum(total),
          n_size_class = n_distinct(size_class)) |> 
   filter(n_obs_pop>=50,
-         n_size_class>=5) |> 
+         n_size_class>=5) |>
   ungroup() |>
   group_by(species, population) |>
   mutate(n_year = n_distinct(year)) |>
@@ -318,19 +322,19 @@ df_filtered2 <- df_filtered |>
   filter(!(species == "Caesioperca lepidoptera" & total>= 1000)) |> 
   filter(!(species == "Caesioperca lepidoptera" & size_class>35)) |> 
   filter(!(species == "Chaetodon tricinctus" & total>= 500)) |> 
-  filter(!(species == "Chlorurus dordidus" & size_class>60)) |>
+  filter(!(species == "Chlorurus sordidus" & size_class>60)) |>
   filter(!(species == "Chromis hypsilepis" & size_class>25)) |>
   filter(!(species == "Chromis hypsilepis" & total >=2000)) |>
   filter(!(species == "Coris bulbifrons" & size_class > 80)) |> 
   filter(!(species == "Coris picta" & size_class >= 40)) |> 
-  filter(!(species == "Dinolestes lewini" & size_class>70)) |> 
+  #filter(!(species == "Dinolestes lewini" & size_class>70)) |> # max size 84
   filter(!(species == "Dotalabrus aurantiacus" & size_class>20)) |> 
-  filter(!(species == "Enoplosus armatus" & size_class > 40)) |> 
+  #filter(!(species == "Enoplosus armatus" & size_class > 40)) |> # max size 50
   filter(!(species == "Eupetrichthys angustipes" & size_class > 25)) |> 
   filter(!(species == "Gerres subfasciatus" & size_class > 30)) |>
   filter(!(species == "Girella zebra" & size_class>60)) |> 
   filter(!(species == "Halichoeres nebulosus" & size_class > 15)) |> 
-  filter(!(species == "Hypoplectrodes maccullochi" & size_class > 30)) |> 
+  #filter(!(species == "Hypoplectrodes maccullochi" & size_class > 30)) |> # max size 45
   filter(!(species == "Labroides dimidiatus" & size_class > 20)) |> 
   filter(!(species == "Mecaenichthys immaculatus" & size_class > 20)) |>
   filter(!(species == "Meuschenia freycineti" & size_class>70)) |> 
@@ -811,7 +815,7 @@ df_final_iso <- df_filtered2 |>
 
 df_total <- bind_rows(df_final, df_final_iso)
 
-# write_csv(df_final, "0_data/02_data_clean/rls_main_clean.csv")
+# write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean.csv")
 # write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean.csv")
 # write_csv(df_total, "0_data/02_data_clean/rls_combo_clean.csv")
 ```
@@ -851,6 +855,12 @@ data_pop_year <- df_total |>
   arrange(latitude, longitude) |> 
   mutate(population = factor( population,levels = unique(population)))
 
+mean_length <- df_total |> 
+  group_by(species, year, population) |> 
+  uncount(total, .remove=F) |> 
+  summarise(mean_length = mean(size_class))
+
+
 
 # loop through species
 pwalk(plot_groups, function(species, area) {
@@ -866,6 +876,9 @@ pwalk(plot_groups, function(species, area) {
   
   hmap <- data_pop_year |> 
  filter(species == !!species)
+  
+  mean_l <- mean_length |> 
+    filter(species == !!species)
   
   point_max <- max(point_data$total, na.rm = TRUE)
   line_max  <- max(line_data$n_obs_size, na.rm = TRUE)
@@ -938,10 +951,27 @@ pwalk(plot_groups, function(species, area) {
       strip.text = element_text(size = 8),
       legend.position = "none")
   
-  p_side <- p_map/p_hmap +plot_layout(heights = c(1.8, 1))
+  pmean <- ggplot(data = mean_l, aes(year, mean_length))+
+  geom_point(size = 0.1)+
+  geom_smooth(method = "lm", linewidth = 0.2)+
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 2))+
+  labs(x = "Year", y = "Mean Length (cm)")+
+  facet_wrap(~population, scales = "free")+
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.ticks = element_line(linewidth = 0.2),
+      axis.text = element_text(size = 5),
+      axis.title = element_text(size = 6),
+      strip.text = element_text(size = 5, margin = margin(0.6, 1, 0.6, 1)),
+        strip.background = element_rect(linewidth = 0.2),
+      panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.2))
+  
+  p_side <- p_map/p_hmap/pmean +plot_layout(heights = c(1.3, 1, 2))
   
   p <- p_years + p_side +
-    plot_layout(widths = c(4, 0.85))
+    plot_layout(widths = c(4, 1.3))
   
   file_name <- paste(species, area, sep = "_") |> 
     str_replace_all("[^A-Za-z0-9]+", "_")

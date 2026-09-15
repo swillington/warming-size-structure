@@ -205,31 +205,6 @@ write_csv(hadisst_sst, file = file.path(output_dir,paste("HadISST_all_pops_month
 ```
 
 
-```{r combine with rls data}
-hadisst_sst <- read_csv(file.path(output_dir,paste("HadISST_all_pops_monthly_mean.csv" )))
-
-#check all years have all months
-d <- hadisst_sst |>
-  count(population, year, name = "n_months")
-
-# annual mean sst
-hadisst_sst_annual <- hadisst_sst |> 
-  group_by(population, year) |> 
-  summarise(sst_mean_annual = mean(sst_mean)) |> 
-  ungroup()
-
-df_total <- df_total |> 
-  left_join(hadisst_sst_annual, by = c("population", "year"))
-df_final <- df_final |> 
-  left_join(hadisst_sst_annual, by = c("population", "year"))
-df_final_iso <- df_final_iso |> 
-  left_join(hadisst_sst_annual, by = c("population", "year"))
-
-# write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean_sst.csv")
-# write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean_sst.csv")
-# write_csv(df_total, "0_data/02_data_clean/rls_combo_clean_sst.csv")
-```
-
 
 ### temperature plot
 
@@ -345,20 +320,12 @@ aus_states <- rnaturalearth::ne_states(
     xmin = 135, xmax = 155,
     ymin = -45, ymax = -20 )
 
-# Set plot limits from your points, with padding
-pad <- 1.5
-
-point_coords <- st_coordinates(site_points_sf)
-
-xlim <- range(point_coords[, "X"], na.rm = TRUE) + c(-pad, pad)
-ylim <- range(point_coords[, "Y"], na.rm = TRUE) + c(-pad, pad)
-
 # map plot showing populations
 p_population_map <- ggplot() +
   geom_sf(
     data = population_grid_sf,
     aes(fill = population),
-    colour = NA) +
+    colour = NA, alpha = 1) +
   geom_sf(data = aus, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
   geom_sf(data = aus_states, fill = NA, colour = "grey65", linewidth = 0.25) +
   scale_fill_manual( values = pal,name = "Population") +

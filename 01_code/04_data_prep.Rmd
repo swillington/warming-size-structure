@@ -1,0 +1,1276 @@
+---
+title: "data prep"
+author: "Sarah Willington"
+date: "2026-07-08"
+output: html_document
+---
+
+This script combines SST temperature from the Met Office Hadley HadISST model and the NOAA OISST model with the cleaned RLS data. 
+
+It then sets MPA bounds
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidylog)
+library(paletteer)
+library(ggtext)
+library(rstan)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rnaturalearthhires)
+```
+
+
+```{r set project directory path}
+
+rm(list = ls())
+project_dir <- here::here()
+
+input_dir <- file.path(project_dir, "0_data", "01_data_raw")
+output_dir <- file.path(project_dir, "0_data", "02_data_clean", "by_species")
+```
+
+```{r load data}
+df_final <- read_csv(file.path(project_dir, "0_data", "02_data_clean", "rls_se_aus_clean.csv"))
+df_final_iso <- read_csv( file.path(project_dir,"0_data/02_data_clean/rls_lhi_clean.csv"))
+df_total <- read_csv(file.path(project_dir,"0_data/02_data_clean/rls_combo_clean.csv"))
+mpa <- read_csv(file.path(project_dir,"0_data/01_data_raw/MPA/NEOLI_MPA_status.csv")) 
+mpa_neo <- read_csv(file.path(project_dir,"0_data/01_data_raw/MPA/mpa_neo_rating.csv")) 
+
+hadisst_sst <- read_csv(file.path(input_dir,paste("HadISST_all_pops_monthly_mean.csv" ))) |> 
+  select(-date) |> 
+  rename(sst_month_met = sst_mean)
+noaa_sst <- read_csv(file.path(input_dir,paste("oisst_summary/oisst_monthly_by_box.csv" ))) |> 
+  rename(population = box_id, 
+         sst_month_noaa = sst_mean_monthly)
+```
+
+## add SST
+
+```{r combine SST with rls data}
+
+#check all years have all months
+d <- hadisst_sst |>
+  count(population, year, name = "n_months")
+d2 <- noaa_sst |>
+  count(population, year, name = "n_months")
+
+# annual mean sst
+hadisst_sst_annual <- hadisst_sst |> 
+  group_by(population, year) |> 
+  summarise(sst_year_met = mean(sst_month_met)) |> 
+  ungroup()
+
+noaa_sst_annual <- noaa_sst |> 
+  group_by(population, year) |> 
+  summarise(sst_year_noaa = mean(sst_month_noaa)) |> 
+  ungroup()
+
+df_total <- df_total |> 
+  left_join(hadisst_sst_annual, by = c("population", "year")) |> 
+  left_join(hadisst_sst, by = c("population", "year", "month")) |> 
+  left_join(noaa_sst_annual, by = c("population", "year")) |> 
+  left_join(noaa_sst, by = c("population", "year", "month"))
+
+df_final <- df_final |> 
+  left_join(hadisst_sst_annual, by = c("population", "year")) |> 
+  left_join(hadisst_sst, by = c("population", "year", "month")) |> 
+  left_join(noaa_sst_annual, by = c("population", "year")) |> 
+  left_join(noaa_sst, by = c("population", "year", "month"))
+
+df_final_iso <- df_final_iso |> 
+  left_join(hadisst_sst_annual, by = c("population", "year")) |> 
+  left_join(hadisst_sst, by = c("population", "year", "month")) |> 
+  left_join(noaa_sst_annual, by = c("population", "year")) |> 
+  left_join(noaa_sst, by = c("population", "year", "month"))
+
+# write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean_sst.csv")
+# write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean_sst.csv")
+# write_csv(df_total, "0_data/02_data_clean/rls_combo_clean_sst.csv")
+
+```
+
+```{r plot sst data}
+# create plotting dataset
+df_sst <- hadisst_sst_annual |> 
+   left_join(noaa_sst_annual, by = c("population", "year")) |> 
+  pivot_longer(cols = c("sst_year_met", "sst_year_noaa"),  
+               names_to = "model", 
+               values_to = "sst_mean") |> 
+  mutate(model = case_match(model,
+                            "sst_year_met" ~ "HadiSST", 
+                            "sst_year_noaa" ~ "NOAA OISST")) |> 
+   separate_wider_delim(
+    population,
+    delim = "_",
+    names = c("latitude", "longitude"),
+    cols_remove = FALSE) |> 
+  mutate(
+    latitude  = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    population = paste(latitude, longitude, sep = ",")) |>
+  arrange(desc(latitude)) |> 
+  mutate(population = factor( population,levels = unique(population)))
+
+pal <-c("#9B3441FF", "#D8443CFF","#DE597CFF","#E87B89FF","#E6A2A6FF","#FE9B00FF", "#F4C40FFF", "#FBE183FF", "#92C051FF",  "#2B9B81FF",  "#1F6E9CFF","#AA7AA1FF", "#9F5691FF", "#633372FF","#2B1B5A"  )
+
+# sst plot by population
+  pl <- ggplot(data = df_sst,
+               aes(year, sst_mean,  
+                   colour = population, 
+                   group = interaction(population,model), 
+                   linetype = model))+
+  geom_line(linewidth = 0.3)+
+   scale_color_manual(values = pal)+
+  labs(x = "Year", y = expression("Mean annual SST ( " * degree * "C)"), colour = "Population", linetype = "SST product")+
+  scale_x_continuous(breaks = scales::breaks_pretty(n = 6))+
+  scale_y_continuous(breaks = scales::breaks_pretty(n = 6))+
+  guides(colour = guide_legend(override.aes = list(linewidth = 1.2)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size =9 ),
+    axis.text = element_text(size = 8), 
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9), 
+    axis.title.x = element_blank())
+pl
+
+# ggsave(
+#   "03_graphics/sst_compare.png",
+#   pl,
+#   width = 10,
+#   height = 11,
+#   dpi = 600,
+#   units = "cm"
+# )
+```
+
+
+## set MPA status
+
+```{r set mpa status and neoli}
+
+# remove duplicate rows
+mpa_one <- mpa |> 
+  group_by(site_code) |> 
+  summarise(
+    across(everything(), ~ .x[!is.na(.x)][1]),
+    .groups = "drop")
+
+# check mpa names
+d <- mpa_one |> group_by(mpa_name) |>  summarise(n_site_codes = n_distinct(site_code))
+d <- df_total |>
+  count(site_code, name = "count_sites")
+#write_csv(d, file.path(project_dir,"0_data/01_data_raw/df_site_codes.csv"))
+
+mpa_neo <- mpa_neo |> select(site_code, year_of_protection, rls_mpa)
+
+
+# join to df
+df_final <- df_final |> 
+  left_join(mpa_neo, by = "site_code")
+
+df_final_iso <- df_final_iso |> 
+  left_join(mpa_neo, by = "site_code")
+
+df_total <- df_total |> 
+  left_join(mpa_neo, by = "site_code")
+
+```
+
+```{r create mpa bounding boxes}
+
+# mpa bounding boxes
+tinderbox_bounds <- list(
+  lon_min = 147.32187,
+  lon_max = 147.34778,
+  lat_min = -43.06307,
+  lat_max = -43.02767)
+
+governor_island_bounds <- list(
+  lon_min = 148.31242,
+  lon_max = 148.31756,
+  lat_min = -41.87818,
+  lat_max = -41.86693)
+
+kent_group_bounds <- list(
+  lon_min = 147.19,
+  lon_max = 147.43,
+  lat_min = -39.55,
+  lat_max = -39.38)
+
+maria_island_notake_bounds <- list(
+  lon_min = 148.01355,  # 148°00.813’ E
+  lon_max = 148.06440,  # 148°03.864’ E
+  lat_min = -42.62633,  # 42°37.580’ S
+  lat_max = -42.56145)   # 42°33.687’ S
+
+ninepin_point_bounds <- list(
+  lon_min = 147.16112,
+  lon_max = 147.22677,
+  lat_min = -43.29138,
+  lat_max = -43.27500)
+
+port_davey_bounds <- list(
+  lon_min = 145.83,
+  lon_max = 146.26,
+  lat_min = -43.38,
+  lat_max = -43.22)
+
+beware_reef_bounds <- list(
+  lon_min = 148.77833,
+  lon_max = 148.79556,
+  lat_min = -37.82806,
+  lat_max = -37.81444)
+
+bunurong_mnp_bounds <- list(
+  lon_min = 145.63167,
+  lon_max = 145.67383,
+  lat_min = -38.72533,
+  lat_max = -38.66667)
+
+point_hicks_bounds <- list(
+  lon_min = 149.21500,
+  lon_max = 149.29583,
+  lat_min = -37.85033,
+  lat_max = -37.77717)
+
+port_phillip_heads_sections <- tibble::tribble(
+  ~section,         ~lon_min,   ~lon_max,   ~lat_min,    ~lat_max,
+  "Point Lonsdale", 144.60233,  144.63400,  -38.30067,  -38.28950,
+  "Point Nepean",   144.64000,  144.68717,  -38.32383,  -38.30450,
+  "Swan Bay",       144.60967,  144.70150,  -38.27333,  -38.20933,
+  "Mud Islands",    144.75283,  144.78217,  -38.28300,  -38.26000,
+  "Portsea Hole",   144.70917,  144.71433,  -38.31567,  -38.30950)
+
+marine_sanctuary_bounds <- tibble::tribble(
+  ~reserve,          ~lon_min,    ~lon_max,    ~lat_min,    ~lat_max,
+  "Point Cooke MS",  144.78000,   144.81167,   -37.93389,   -37.91028,
+  "Jawbone MS",     144.87083,   144.88361,   -37.86972,   -37.86111,
+  "Ricketts Point MS", 145.01444, 145.04000,   -37.99917,   -37.98083)
+
+wilsons_prom_mnp_bounds <- list(
+  lon_min = 146.22316,
+  lon_max = 146.47984,
+  lat_min = -39.18617,
+  lat_max = -39.04100)
+
+cape_howe_mnp_bounds <- list(
+  lon_min = 149.91217,
+  lon_max = 150.03367,
+  lat_min = -37.57817,
+  lat_max = -37.50517)
+
+cape_byron_marine_park_bounds <- list(
+  lon_min = 153.50000,  # 153°30'E
+  lon_max = 153.67805,  # 153°40.683'E
+  lat_min = -28.80952,  # 28°48.571'S
+  lat_max = -28.50000)   # 28°30'S
+
+solitary_islands_bounds <- list(
+  lon_min = 153.08333,  # 153°05'E
+  lon_max = 153.50000,  # 153°30'E
+  lat_min = -30.30508,  # 30°18.305'S, around Coffs Harbour/Muttonbird Island
+  lat_max = -29.66667)   # 29°40'S
+
+port_stephens_great_lakes_bounds <- list(
+  lon_min = 151.91667,  # 151°55'E
+  lon_max = 152.62938,  # 152°37.763'E
+  lat_min = -32.83333,  # 32°50'S
+  lat_max = -32.19655)   # 32°11.793'S
+
+lord_howe_island_bounds <- list(
+  lon_min = 159.04340,  # 159°02.604'E
+  lon_max = 159.11667,  # 159°07'E
+  lat_min = -31.59722,  # 31°35.833'S
+  lat_max = -31.48333)   # 31°29'S
+
+jervis_bay_bounds <- list(
+  lon_min = 150.58333,  # 150°35'E
+  lon_max = 150.84685,  # 150°50.811'E, approx eastern labelled zone edge
+  lat_min = -35.21342,  # 35°12.805'S
+  lat_max = -34.96333)   # 34°57.800'S
+
+batemans_marine_park_bounds <- list(
+  lon_min = 149.91667,  # 149°55'E
+  lon_max = 150.50000,  # 150°30'E
+  lat_min = -36.41667,  # 36°25'S
+  lat_max = -35.50000 )  # 35°30'S
+
+# helper to convert list bounds to one-row tibble
+bounds_row <- function(x, reserve) {
+  tibble::tibble(
+    reserve = reserve,
+    lon_min = x$lon_min,
+    lon_max = x$lon_max,
+    lat_min = x$lat_min,
+    lat_max = x$lat_max
+  )
+}
+
+# combine all MPA bounds into one tibble
+mpa_bounds <- bind_rows(
+  bounds_row(tinderbox_bounds, "Tinderbox"),
+  bounds_row(governor_island_bounds, "Governor Island"),
+  bounds_row(kent_group_bounds, "Kent Group"),
+  bounds_row(maria_island_notake_bounds, "Maria Island no-take"),
+  bounds_row(ninepin_point_bounds, "Ninepin Point"),
+  bounds_row(port_davey_bounds, "Port Davey"),
+  bounds_row(beware_reef_bounds, "Beware Reef"),
+  bounds_row(bunurong_mnp_bounds, "Bunurong MNP"),
+  bounds_row(point_hicks_bounds, "Point Hicks"),
+  bounds_row(wilsons_prom_mnp_bounds, "Wilsons Promontory MNP"),
+  #bounds_row(cape_howe_mnp_bounds, "Cape Howe MNP"),
+  #bounds_row(cape_byron_marine_park_bounds, "Cape Byron Marine Park"),
+  bounds_row(solitary_islands_bounds, "Solitary Islands Marine Park"),
+  bounds_row(port_stephens_great_lakes_bounds, "Port Stephens-Great Lakes Marine Park"),
+  bounds_row(lord_howe_island_bounds, "Lord Howe Island Marine Park"),
+  bounds_row(jervis_bay_bounds, "Jervis Bay Marine Park"),
+  bounds_row(batemans_marine_park_bounds, "Batemans Marine Park"),
+
+  port_phillip_heads_sections |>
+    transmute(
+      reserve = paste("Port Phillip Heads", section, sep = " - "),
+      lon_min, lon_max, lat_min, lat_max
+    ),
+
+  marine_sanctuary_bounds |>
+    select(reserve, lon_min, lon_max, lat_min, lat_max))
+
+mpa_bounds_nsw <- bind_rows(
+  bounds_row(solitary_islands_bounds, "Solitary Islands Marine Park"),
+  bounds_row(port_stephens_great_lakes_bounds, "Port Stephens-Great Lakes Marine Park"),
+  bounds_row(lord_howe_island_bounds, "Lord Howe Island Marine Park"),
+  bounds_row(jervis_bay_bounds, "Jervis Bay Marine Park"),
+  bounds_row(batemans_marine_park_bounds, "Batemans Marine Park"))
+
+mpa_bounds_vic <- bind_rows(
+  bounds_row(beware_reef_bounds, "Beware Reef"),
+  bounds_row(bunurong_mnp_bounds, "Bunurong MNP"),
+  bounds_row(point_hicks_bounds, "Point Hicks"),
+  bounds_row(wilsons_prom_mnp_bounds, "Wilsons Promontory MNP"),
+  port_phillip_heads_sections |>
+    transmute(
+      reserve = paste("Port Phillip Heads", section, sep = " - "),
+      lon_min, lon_max, lat_min, lat_max),
+ marine_sanctuary_bounds |>
+    select(reserve, lon_min, lon_max, lat_min, lat_max))
+
+mpa_bounds_tas <- bind_rows(
+  bounds_row(tinderbox_bounds, "Tinderbox"),
+  bounds_row(governor_island_bounds, "Governor Island"),
+  bounds_row(kent_group_bounds, "Kent Group"),
+  bounds_row(maria_island_notake_bounds, "Maria Island no-take"),
+  bounds_row(ninepin_point_bounds, "Ninepin Point"),
+  bounds_row(port_davey_bounds, "Port Davey"))
+
+
+# convert bounding boxes to sf polygons
+mpa_boxes_sf <- mpa_bounds |>
+  mutate(
+    geometry = pmap(
+      list(lon_min, lon_max, lat_min, lat_max),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin),
+            ncol = 2,
+            byrow = TRUE))) })) |>
+  st_as_sf(crs = 4326)
+
+mpa_boxes_nsw_sf <- mpa_bounds_nsw |>
+  mutate(
+    geometry = pmap(
+      list(lon_min, lon_max, lat_min, lat_max),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin),
+            ncol = 2,
+            byrow = TRUE))) })) |>
+  st_as_sf(crs = 4326)
+
+mpa_boxes_vic_sf <- mpa_bounds_vic |>
+  mutate(
+    geometry = pmap(
+      list(lon_min, lon_max, lat_min, lat_max),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin),
+            ncol = 2,
+            byrow = TRUE))) })) |>
+  st_as_sf(crs = 4326)
+
+mpa_boxes_tas_sf <- mpa_bounds_tas |>
+  mutate(
+    geometry = pmap(
+      list(lon_min, lon_max, lat_min, lat_max),
+      \(xmin, xmax, ymin, ymax) {
+        st_polygon(list(
+          matrix(
+            c(
+              xmin, ymin,
+              xmax, ymin,
+              xmax, ymax,
+              xmin, ymax,
+              xmin, ymin),
+            ncol = 2,
+            byrow = TRUE))) })) |>
+  st_as_sf(crs = 4326)
+
+# create plotting col
+df_total <- df_total |>
+  mutate(
+    mpa_status = case_when(
+      !is.na(neoli_total) ~ "Has neoli value",
+      is.na(neoli_total) & !is.na(mpa_name) ~ "No neoli value",
+      TRUE ~ "Not protected" ) )|> 
+  mutate(mpa_status = factor( mpa_status,levels = unique(mpa_status)))
+```
+
+```{r nsw mpa map}
+
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to nsw
+nsw <- st_crop(
+  aus,
+  xmin = 149.5, xmax = 155,
+  ymin = -37.5, ymax = -20)
+
+# state boundaries
+nsw_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+    xmin = 149.5, xmax = 155,
+  ymin = -37.5, ymax = -20)
+
+nsw_points <- df_total |> 
+  filter(area == "New South Wales") 
+
+nsw_map <- ggplot() +
+  geom_sf(data = nsw, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = nsw_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_nsw_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+  geom_point(data = nsw_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(149.5, 154),
+        ylim =c(-37.5, -28),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+nsw_map
+
+nsw_map1 <- ggplot() +
+  geom_sf(data = nsw, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = nsw_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_nsw_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+  geom_point(data = nsw_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(153, 154),
+        ylim =c(-30.5, -29.5),
+        expand = FALSE) +
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Solitary Islands marine park") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+nsw_map1
+
+nsw_map2 <- ggplot() +
+  geom_sf(data = nsw, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = nsw_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_nsw_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+  geom_point(data = nsw_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(151.5, 153),
+        ylim =c(-33, -32),
+        expand = FALSE) +
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Port Stephens - Great lakes marine park") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+nsw_map2
+
+nsw_map3 <- ggplot() +
+  geom_sf(data = nsw, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = nsw_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_nsw_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+  geom_point(data = nsw_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(149.5, 151),
+        ylim =c(-36.5, -34.85),
+        expand = FALSE) +
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Jervis and Batemans marine parks") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+nsw_map3
+
+nsw_map1/nsw_map2/nsw_map3
+
+# ggsave(
+#   "02_pipeline/04_data_prep/nsw_map.png",
+#   nsw_map,
+#   width = 14,
+#   height = 13,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/nsw_map1.png",
+#   nsw_map1,
+#   width = 14,
+#   height = 13,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/nsw_map2.png",
+#   nsw_map2,
+#   width = 12,
+#   height = 14,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/nsw_map3.png",
+#   nsw_map3,
+#   width = 14,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+```
+
+```{r vic mpa map}
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to nsw
+vic <- st_crop(
+  aus,
+  xmin = 143, xmax = 150,
+  ymin = -39.5, ymax = -36.5)
+
+# state boundaries
+vic_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+     xmin = 143, xmax = 150,
+  ymin = -39.5, ymax = -36.5)
+
+vic_points <-  df_total |> 
+  filter(area == "Victoria")
+
+vic_map <- ggplot() +
+  geom_sf(data = vic, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = vic_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_vic_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+ geom_point(data = vic_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(143, 150),
+        ylim =c(-39.5, -36.5),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+vic_map
+
+vic_map1 <- ggplot() +
+  geom_sf(data = vic, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = vic_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_vic_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+ geom_point(data = vic_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(148.5, 149.5),
+        ylim =c(-38, -37.5),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+vic_map1
+
+vic_map2 <- ggplot() +
+  geom_sf(data = vic, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = vic_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_vic_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+ geom_point(data = vic_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(145.5, 147),
+        ylim =c(-39.5, -38.5),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+vic_map2
+
+vic_map3 <- ggplot() +
+  geom_sf(data = vic, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = vic_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_vic_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+ geom_point(data = vic_points, aes(longitude, latitude, colour = mpa_status), size = 0.7)+
+  coord_sf(
+        xlim = c(144.1, 145.5),
+        ylim =c(-38.7, -37.7),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+vic_map3
+
+# ggsave(
+#   "02_pipeline/04_data_prep/vic_map.png",
+#   vic_map,
+#   width = 17,
+#   height = 11,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/vic_map1.png",
+#   vic_map1,
+#   width = 15,
+#   height = 10,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/vic_map2.png",
+#   vic_map2,
+#   width = 14,
+#   height = 14,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/vic_map3.png",
+#   vic_map3,
+#   width = 14,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+```
+
+```{r tas mpa map}
+aus <- rnaturalearth::ne_download(
+  scale = 10,
+  type = "land",
+  category = "physical",
+  returnclass = "sf") |>
+  st_transform(4326)
+
+# Crop to tas
+tas <- st_crop(
+  aus,
+  xmin = 143.5, xmax = 149,
+  ymin = -44, ymax = -39)
+
+# state boundaries
+tas_states <- rnaturalearth::ne_states(
+  country = "Australia",
+  returnclass = "sf") |>
+  st_transform(4326) |>
+  st_crop(
+   xmin = 143.5, xmax = 149,
+  ymin = -44, ymax = -39)
+
+tas_points  <-  df_total |> 
+  filter(area == "Tasmania")
+
+tas_map <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(143.75, 149),
+        ylim =c(-44, -39.3),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)")) +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map
+
+tas_map1 <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(146.75, 148),
+        ylim =c(-39.7, -39.3),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Kent group") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map1
+
+tas_map2 <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(147.8, 148.5),
+        ylim =c(-42, -41.8),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "governor island") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map2
+
+tas_map3 <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(147.75, 148.5),
+        ylim =c(-42.7, -42.4),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Maria island") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map3
+
+tas_map4 <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(146.75, 147.5),
+        ylim =c(-43.4, -42.9),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Tinderbox and ninepin point") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map4
+
+tas_map5 <- ggplot() +
+  geom_sf(data = tas, fill = "grey85", colour = "grey60", linewidth = 0.2, alpha = 0.8) +
+  geom_sf(data = tas_states, fill = NA, colour = "grey65", linewidth = 0.25) +
+  geom_sf(
+    data = mpa_boxes_tas_sf,
+    fill = NA,
+    colour = "black",
+    linewidth = 0.2,
+    linetype = "dotted") +
+   geom_point(data = tas_points, aes(longitude, latitude, colour = mpa_status), size = 0.6)+
+  coord_sf(
+        xlim = c(145.6, 146.3),
+        ylim =c(-43.4, -43.2),
+        expand = FALSE) +
+  scale_y_continuous( breaks = seq(-45.5, -10.5, by = 1),
+                          labels = function(x) {
+      ifelse(seq_along(x) %% 2 == 1, x, "")}) +
+  scale_x_continuous(breaks = seq(135.5, 160.5, by = 1),
+                         labels = function(x) {
+      ifelse(seq_along(x) %% 4 == 1, x, "")})+
+  labs(
+    x = expression("Longitude (" * degree * "E)"),
+    y = expression("Latitude (" * degree * "S)"), 
+    title = "Port Davey") +
+  guides(
+    fill = guide_legend(
+      keyheight = unit(0.5, "cm"),
+      keywidth = unit(0.5, "cm") )) +
+  theme_bw() +
+  theme(legend.spacing.y = unit(0.1, "cm"),
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 8),
+    legend.position = "right",
+    panel.grid.major = element_line(linewidth = 0.2),)
+
+tas_map5
+
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map.png",
+#   tas_map,
+#   width = 19,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map1.png",
+#   tas_map1,
+#   width = 15,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map2.png",
+#   tas_map2,
+#   width = 14,
+#   height = 14,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map3.png",
+#   tas_map3,
+#   width = 14,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map4.png",
+#   tas_map4,
+#   width = 14,
+#   height = 16,
+#   dpi = 600,
+#   units = "cm")
+# ggsave(
+#   "02_pipeline/04_data_prep/tas_map5.png",
+#   tas_map5,
+#   width = 14,
+#   height = 15,
+#   dpi = 600,
+#   units = "cm")
+```
+
+## define which MPAs to use
+
+```{r set valid MPAs}
+mpa_valid <- df_total |> 
+  dplyr::group_by(mpa_name) |> 
+  dplyr::summarise(
+    first_value = dplyr::first(neoli_total),
+    .groups = "drop"
+  )
+
+mpa_valid <- df_total |> 
+  dplyr::group_by(rls_mpa) |> 
+  dplyr::summarise(
+    first_value = dplyr::first(year_of_protection),
+    .groups = "drop"
+  )
+
+# list of MPAs to keep 
+
+mpa <- c("Kent Group Marine Park", 
+         "Maria Island Marine Reserve", 
+         "Port Davey National Park", 
+         "Tinderbox Marine Reserve", 
+         "Governor Island Marine Nature Reserve", 
+         "Batemans Marine Park", 
+         "Jervis Bay Marine Park", 
+         "Booderee National Park", 
+         "Lord Howe Island Marine Park", 
+         "Port Stephens Great Lake Marine Park", 
+         "Fly Point-Halifax Park", 
+         "Solitary Islands Marine Park", 
+         "Shiprock Aquatic Reserve", 
+         "Cabbage Tree Bay Aquatic Reserve", 
+         "Bushrangers Bay Aquatic Reserve", 
+         "Beware Reef Marine Sanctuary", 
+         "Ricketts Point Marine Sanctuary", 
+         "Port Phillip Heads Marine National Park", 
+         "Wilsons Promontory Marine National Park", 
+         "Wilsons Promontory Marine Park", 
+         "Wilsons Promontory Marine Reserve", 
+         "Point Hicks Marine National Park", 
+         "Bunurong Marine National Park", 
+         "Bunurong Marine Park")
+
+# df_total <- df_total |>
+#   mutate(mpa = as.integer(mpa_name %in% mpa))
+# 
+# df_final <- df_final |>
+#   mutate(mpa = as.integer(mpa_name %in% mpa))
+# 
+# df_final_iso <- df_final_iso |> 
+#   mutate(mpa = as.integer(mpa_name %in% mpa))
+
+df_total <- df_total |>
+  mutate( mpa = if_else(
+      !is.na(year_of_protection) & year >= year_of_protection + 10,1L,0L))
+
+df_final <- df_final |>
+  mutate( mpa = if_else(
+      !is.na(year_of_protection) & year >= year_of_protection + 10,1L,0L))
+
+df_final_iso <- df_final_iso |>
+  mutate( mpa = if_else(
+      !is.na(year_of_protection) & year >= year_of_protection + 10,1L,0L))
+
+# write_csv(df_final, "0_data/02_data_clean/rls_se_aus_clean_sst_mpa.csv")
+# write_csv(df_final_iso, "0_data/02_data_clean/rls_lhi_clean_sst_mpa.csv")
+# write_csv(df_total, "0_data/02_data_clean/rls_combo_clean_sst_mpa.csv")
+```
+
+
+# separate by species
+
+### view data 
+
+```{r plot change in mean length}
+
+# aggregated over all areas
+df_total_sum <- df_total |> 
+  group_by(species, year) |> 
+  uncount(total, .remove=F) |> 
+  summarise(mean_length = mean(size_class))
+
+df_total_sum |> 
+  #filter(species == "Pictilabrus laticlavius") |> 
+ggplot( aes(year, mean_length, colour = species))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  facet_wrap(~species, scales = "free")+
+  theme_bw()+
+  theme(legend.position = "none")
+
+# aggregated by populations
+df_total_sum_pop <- df_total |> 
+  group_by(species, year, population) |> 
+  uncount(total, .remove=F) |> 
+  summarise(mean_length = mean(size_class))
+
+df_total_sum_pop |> 
+  filter(species == "Acanthaluteres vittiger") |> 
+ggplot( aes(year, mean_length, colour))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  facet_wrap(~population, scales = "free")+
+  theme_bw()+
+  theme(legend.position = "none")
+```
+
+```{r}
+df_total_unique <- df_total |>select(-grp_id) |> 
+  distinct() |> 
+  group_by(species, population) |> 
+  summarise(n_obs_pop = sum(total), 
+            n_year = n_distinct(year),
+            n_size_class = n_distinct(size_class))
+```
+
+
+### filter out specific species
+
+```{r}
+df_total |> 
+  select(-grp_id) |> 
+  distinct() |> 
+  group_by(species) |>
+  select(-c(ecoregion, site_code, site_name, pop_lon, pop_lat, hour, phylum, order, class, family, n_obs_pop, n_size_class, n_year, survey_id, area, location, depth, program, method, biomass)) |> 
+  rename(sst_mean_annual = sst_year_noaa, 
+         location = population, MPA = mpa) |> 
+  group_walk(\(.x, .y) {
+
+    species_name <- str_replace_all(
+      .y$species,
+      "[^A-Za-z0-9_-]",
+      "_"
+    )
+
+    write_csv(
+      bind_cols(.y, .x),
+      file.path(output_dir, paste0(species_name, ".csv"))
+    )
+  })
+```
+
+
+
