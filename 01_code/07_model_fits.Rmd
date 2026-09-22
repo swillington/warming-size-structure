@@ -40,14 +40,6 @@ stan_file <- "01_code/fish_length_NegBinomial_parallelised_MPA.stan"
 ```
 
 
-```{r custom load functions, include=FALSE}
-
-purrr::walk(
-  list.files("01_code/functions", pattern = "\\.R$", full.names = TRUE),
-  source)
-
-```
-
 ```{r import fits, include=FALSE}
 fit_files <- list.files(
   input_dir,
@@ -88,6 +80,16 @@ model_summaries <- map_dfr(file_list,
 
 #write_csv(model_summaries, file.path(input_dir, "model_summaries.csv"))
 ```
+
+
+```{r custom load functions, include=FALSE}
+
+purrr::walk(
+  list.files("01_code/functions", pattern = "\\.R$", full.names = TRUE),
+  source)
+
+```
+
 
 ```{r trace plots}
 pars = c("beta_mu_zS",   
