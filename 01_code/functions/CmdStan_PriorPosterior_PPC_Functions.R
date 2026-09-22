@@ -630,7 +630,7 @@ FishLengthPriorPosteriorPlot <- function(
 }
 
 # -----------------------------------------------------------------------------
-# 4. Posterior predictive simulation for fish_length_NegBinomial_fixed(2).stan
+# 4. Posterior predictive simulation for fish_length_NegBinomial
 # -----------------------------------------------------------------------------
 
 .log_sum_exp <- function(x) {
@@ -640,7 +640,8 @@ FishLengthPriorPosteriorPlot <- function(
 }
 
 .validate_fish_length_data <- function(stan_data) {
-  required <- c("N", "R", "J", "mid", "log_bw", "r", "zS", "dT", "n", "nT")
+  required <- c("N", "R", "J", "mid", "log_bw",
+                "r", "zS", "dT", "MPA", "n", "nT")
   missing <- setdiff(required, names(stan_data))
   if (length(missing) > 0) {
     stop("stan_data is missing: ", paste(missing, collapse = ", "))
@@ -654,6 +655,11 @@ FishLengthPriorPosteriorPlot <- function(
   if (length(stan_data$r) != N) stop("length(r) must equal N.")
   if (length(stan_data$zS) != N) stop("length(zS) must equal N.")
   if (length(stan_data$dT) != N) stop("length(dT) must equal N.")
+  if (length(stan_data$MPA) != N) stop("length(MPA) must equal N.")
+  
+  if (!all(stan_data$MPA %in% c(0, 1))) {
+    stop("MPA must contain only 0 and 1.")
+  }
   if (length(stan_data$nT) != N) stop("length(nT) must equal N.")
 
   n_obs <- stan_data$n
@@ -683,67 +689,130 @@ SimulatePosteriorPredictiveCmdStan <- function(
     stan_data,
     ndraws = 200,
     seed = 123) {
-
+  
   .check_cmdstan_fit(stan_fit)
   .validate_fish_length_data(stan_data)
-
+  
   if (!is.numeric(ndraws) || length(ndraws) != 1 || ndraws < 1) {
     stop("ndraws must be a positive integer.")
   }
+  
   ndraws <- as.integer(ndraws)
-
+  
+  # Parameters required to reproduce the fitted model
   needed <- c(
     "mu_0", "alpha_0",
-    "beta_mu_zS", "beta_mu_dT",
-    "beta_alpha_zS", "beta_alpha_dT",
-    "loc_re", "loctime_re", "phi_nb"
+    
+    "beta_mu_zS",
+    "beta_mu_dT",
+    "beta_mu_MPA",
+    "beta_mu_MPA_dT",
+    
+    "beta_alpha_zS",
+    "beta_alpha_dT",
+    "beta_alpha_MPA",
+    "beta_alpha_MPA_dT",
+    
+    "loc_re",
+    "loctime_re",
+    "phi_nb"
   )
-
-  draws_df <- as.data.frame(stan_fit$draws(variables = needed, format = "df"))
+  
+  draws_df <- as.data.frame(
+    stan_fit$draws(
+      variables = needed,
+      format = "df"
+    )
+  )
+  
   total_draws <- nrow(draws_df)
-
+  
   if (ndraws > total_draws) {
     warning("ndraws exceeds available posterior draws; using all draws.")
     ndraws <- total_draws
   }
-
+  
   set.seed(seed)
-  draw_rows <- sort(sample.int(total_draws, ndraws, replace = FALSE))
+  
+  draw_rows <- sort(
+    sample.int(
+      total_draws,
+      ndraws,
+      replace = FALSE
+    )
+  )
+  
   draws_use <- draws_df[draw_rows, , drop = FALSE]
-
+  
+  # Data
   N <- as.integer(stan_data$N)
   J <- as.integer(stan_data$J)
+  
   mid <- as.numeric(stan_data$mid)
   log_bw <- as.numeric(stan_data$log_bw)
+  
   r <- as.integer(stan_data$r)
+  
   zS <- as.numeric(stan_data$zS)
   dT <- as.numeric(stan_data$dT)
+  MPA <- as.numeric(stan_data$MPA)
+  
   nT <- as.numeric(stan_data$nT)
-
-  # Column names needed for the transformed random effects.
-  loc_mu_cols <- paste0("loc_re[1,", r, "]")
-  loc_alpha_cols <- paste0("loc_re[2,", r, "]")
-  loctime_mu_cols <- paste0("loctime_re[1,", seq_len(N), "]")
-  loctime_alpha_cols <- paste0("loctime_re[2,", seq_len(N), "]")
-
+  
+  
+  # Column names for transformed random effects
+  loc_mu_cols <-
+    paste0("loc_re[1,", r, "]")
+  
+  loc_alpha_cols <-
+    paste0("loc_re[2,", r, "]")
+  
+  loctime_mu_cols <-
+    paste0("loctime_re[1,", seq_len(N), "]")
+  
+  loctime_alpha_cols <-
+    paste0("loctime_re[2,", seq_len(N), "]")
+  
+  
+  # Check that all required posterior draws exist
   required_draw_cols <- unique(c(
-    "mu_0", "alpha_0",
-    "beta_mu_zS", "beta_mu_dT",
-    "beta_alpha_zS", "beta_alpha_dT",
+    "mu_0",
+    "alpha_0",
+    
+    "beta_mu_zS",
+    "beta_mu_dT",
+    "beta_mu_MPA",
+    "beta_mu_MPA_dT",
+    
+    "beta_alpha_zS",
+    "beta_alpha_dT",
+    "beta_alpha_MPA",
+    "beta_alpha_MPA_dT",
+    
     "phi_nb",
-    loc_mu_cols, loc_alpha_cols,
-    loctime_mu_cols, loctime_alpha_cols
+    
+    loc_mu_cols,
+    loc_alpha_cols,
+    loctime_mu_cols,
+    loctime_alpha_cols
   ))
-
-  missing_cols <- setdiff(required_draw_cols, names(draws_use))
+  
+  missing_cols <- setdiff(
+    required_draw_cols,
+    names(draws_use)
+  )
+  
   if (length(missing_cols) > 0) {
+    
     stop(
       "Required posterior variables are missing from the fit: ",
       paste(head(missing_cols, 20), collapse = ", "),
       if (length(missing_cols) > 20) " ..." else ""
     )
   }
-
+  
+  
+  # Array for posterior predictive datasets
   yrep <- array(
     0L,
     dim = c(ndraws, N, J),
@@ -753,47 +822,121 @@ SimulatePosteriorPredictiveCmdStan <- function(
       bin = seq_len(J)
     )
   )
-
+  
+  
+  # Generate replicated datasets
   for (d in seq_len(ndraws)) {
-    loc_mu <- as.numeric(unlist(draws_use[d, loc_mu_cols, drop = FALSE], use.names = FALSE))
-    loc_alpha <- as.numeric(unlist(draws_use[d, loc_alpha_cols, drop = FALSE], use.names = FALSE))
-    loctime_mu <- as.numeric(unlist(draws_use[d, loctime_mu_cols, drop = FALSE], use.names = FALSE))
-    loctime_alpha <- as.numeric(unlist(draws_use[d, loctime_alpha_cols, drop = FALSE], use.names = FALSE))
-
+    
+    loc_mu <- as.numeric(
+      unlist(
+        draws_use[d, loc_mu_cols, drop = FALSE],
+        use.names = FALSE
+      )
+    )
+    
+    loc_alpha <- as.numeric(
+      unlist(
+        draws_use[d, loc_alpha_cols, drop = FALSE],
+        use.names = FALSE
+      )
+    )
+    
+    loctime_mu <- as.numeric(
+      unlist(
+        draws_use[d, loctime_mu_cols, drop = FALSE],
+        use.names = FALSE
+      )
+    )
+    
+    loctime_alpha <- as.numeric(
+      unlist(
+        draws_use[d, loctime_alpha_cols, drop = FALSE],
+        use.names = FALSE
+      )
+    )
+    
+    
+    # ---------------------------
+    # Mean body length
+    # ---------------------------
+    
     log_mu <-
       draws_use$mu_0[d] +
+      
       draws_use$beta_mu_zS[d] * zS +
       draws_use$beta_mu_dT[d] * dT +
+      
+      draws_use$beta_mu_MPA[d] * MPA +
+      
+      draws_use$beta_mu_MPA_dT[d] *
+      MPA * dT +
+      
       loc_mu +
       loctime_mu
-
+    
+    
+    # ---------------------------
+    # Gamma shape
+    # ---------------------------
+    
     log_alpha <-
       draws_use$alpha_0[d] +
+      
       draws_use$beta_alpha_zS[d] * zS +
       draws_use$beta_alpha_dT[d] * dT +
+      
+      draws_use$beta_alpha_MPA[d] * MPA +
+      
+      draws_use$beta_alpha_MPA_dT[d] *
+      MPA * dT +
+      
       loc_alpha +
       loctime_alpha
-
+    
+    
     mu <- exp(log_mu)
+    
     alpha <- exp(log_alpha)
+    
     beta <- alpha / mu
+    
     phi <- draws_use$phi_nb[d]
-
+    
+    
+    # Generate abundance in each length bin
     for (i in seq_len(N)) {
+      
       log_bin_weight <-
-        dgamma(mid, shape = alpha[i], rate = beta[i], log = TRUE) +
+        dgamma(
+          mid,
+          shape = alpha[i],
+          rate = beta[i],
+          log = TRUE
+        ) +
         log_bw
-
-      log_weight_sum <- .log_sum_exp(log_bin_weight)
-      bin_prob <- exp(log_bin_weight - log_weight_sum)
-      lambda <- nT[i] * bin_prob
-
-      # Stan neg_binomial_2(mean=lambda, precision=phi) corresponds to
-      # R's rnbinom(size=phi, mu=lambda).
-      yrep[d, i, ] <- stats::rnbinom(J, size = phi, mu = lambda)
+      
+      # Normalise probabilities across observed length bins
+      log_weight_sum <-
+        .log_sum_exp(log_bin_weight)
+      
+      bin_prob <-
+        exp(log_bin_weight - log_weight_sum)
+      
+      lambda <-
+        nT[i] * bin_prob
+      
+      # Stan neg_binomial_2(mean=lambda, precision=phi)
+      # corresponds to R rnbinom(size=phi, mu=lambda)
+      yrep[d, i, ] <-
+        stats::rnbinom(
+          J,
+          size = phi,
+          mu = lambda
+        )
     }
   }
-
+  
+  
   out <- list(
     yrep = yrep,
     observed = unname(as.matrix(stan_data$n)),
@@ -803,7 +946,9 @@ SimulatePosteriorPredictiveCmdStan <- function(
     draw_rows = draw_rows,
     seed = seed
   )
+  
   class(out) <- "fish_length_ppc"
+  
   out
 }
 
